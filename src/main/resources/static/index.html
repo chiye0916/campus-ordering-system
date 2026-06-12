@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Campus Dining</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="side-nav">
+      <div class="brand">
+        <div class="brand-mark">CD</div>
+        <div>
+          <h1>Campus Dining</h1>
+          <p>Order Console</p>
+        </div>
+      </div>
+
+      <nav class="nav-group" aria-label="主导航">
+        <button class="nav-button active" data-view="menuView">点餐</button>
+        <button class="nav-button" data-view="orderView">订单</button>
+        <button class="nav-button" data-view="manageView">管理</button>
+      </nav>
+
+      <section class="session-panel">
+        <div id="guestPanel">
+          <label>
+            用户名
+            <input id="usernameInput" type="text" autocomplete="username" value="zhangsan">
+          </label>
+          <label>
+            密码
+            <input id="passwordInput" type="password" autocomplete="current-password" value="123456">
+          </label>
+          <label>
+            昵称
+            <input id="nicknameInput" type="text" value="商务用户">
+          </label>
+          <div class="button-row">
+            <button id="loginBtn" class="primary-button">登录</button>
+            <button id="registerBtn" class="ghost-button">注册</button>
+          </div>
+        </div>
+
+        <div id="userPanel" class="hidden">
+          <p class="muted-label">当前用户</p>
+          <strong id="currentUser">未登录</strong>
+          <button id="logoutBtn" class="ghost-button full-button">退出登录</button>
+        </div>
+      </section>
+    </aside>
+
+    <main class="main-content">
+      <header class="top-bar">
+        <div>
+          <p class="muted-label">简化版校园点餐系统</p>
+          <h2 id="viewTitle">点餐</h2>
+        </div>
+        <div id="toast" class="toast" role="status">Ready</div>
+      </header>
+
+      <section id="menuView" class="view active">
+        <div class="content-grid">
+          <section class="workspace">
+            <div class="section-head">
+              <div>
+                <p class="muted-label">商品分类</p>
+                <h3>菜单</h3>
+              </div>
+              <button id="refreshMenuBtn" class="ghost-button">刷新</button>
+            </div>
+            <div id="categoryTabs" class="tabs"></div>
+            <div id="dishList" class="dish-grid"></div>
+          </section>
+
+          <aside class="cart-panel">
+            <div class="section-head">
+              <div>
+                <p class="muted-label">购物车</p>
+                <h3>当前订单</h3>
+              </div>
+              <button id="cleanCartBtn" class="ghost-button">清空</button>
+            </div>
+            <div id="cartList" class="cart-list"></div>
+            <label>
+              备注
+              <textarea id="remarkInput" rows="3" placeholder="少辣、打包、餐具需求"></textarea>
+            </label>
+            <div class="cart-total">
+              <span>合计</span>
+              <strong id="cartTotal">¥0.00</strong>
+            </div>
+            <button id="submitOrderBtn" class="primary-button full-button">提交订单</button>
+          </aside>
+        </div>
+      </section>
+
+      <section id="orderView" class="view">
+        <div class="content-grid">
+          <section class="workspace">
+            <div class="section-head">
+              <div>
+                <p class="muted-label">订单管理</p>
+                <h3>订单列表</h3>
+              </div>
+              <button id="refreshOrdersBtn" class="ghost-button">刷新</button>
+            </div>
+            <div id="orderList" class="table-list"></div>
+          </section>
+
+          <aside class="cart-panel">
+            <div class="section-head">
+              <div>
+                <p class="muted-label">订单详情</p>
+                <h3 id="orderDetailTitle">未选择</h3>
+              </div>
+            </div>
+            <div id="orderDetail" class="detail-panel"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="manageView" class="view">
+        <div class="manage-grid">
+          <section class="workspace">
+            <div class="section-head">
+              <div>
+                <p class="muted-label">分类</p>
+                <h3>分类维护</h3>
+              </div>
+            </div>
+            <form id="categoryForm" class="compact-form">
+              <input id="categoryNameInput" type="text" placeholder="分类名称" required>
+              <input id="categorySortInput" type="number" min="0" placeholder="排序" required>
+              <button class="primary-button" type="submit">新增</button>
+            </form>
+            <div id="manageCategoryList" class="table-list"></div>
+          </section>
+
+          <section class="workspace">
+            <div class="section-head">
+              <div>
+                <p class="muted-label">商品</p>
+                <h3>商品维护</h3>
+              </div>
+              <button id="refreshDishPageBtn" class="ghost-button">刷新</button>
+            </div>
+            <form id="dishForm" class="dish-form">
+              <select id="dishCategoryInput" required></select>
+              <input id="dishNameInput" type="text" placeholder="商品名称" required>
+              <input id="dishPriceInput" type="number" min="0.01" step="0.01" placeholder="价格" required>
+              <select id="dishStatusInput" required>
+                <option value="1">上架</option>
+                <option value="0">下架</option>
+              </select>
+              <input id="dishImageInput" type="text" placeholder="图片地址，可空">
+              <textarea id="dishDescriptionInput" rows="2" placeholder="商品描述"></textarea>
+              <button class="primary-button" type="submit">新增商品</button>
+            </form>
+            <div id="manageDishList" class="table-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

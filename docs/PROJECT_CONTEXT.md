@@ -1,0 +1,218 @@
+# Project Context
+
+新会话开始时，先阅读本文件恢复项目上下文。
+
+## 项目名称
+
+简化版校园点餐系统
+
+## 项目目标
+
+实现一个用于学习 Java/Spring Boot 后端业务开发的校园点餐 Demo，核心闭环是：
+
+```text
+用户浏览商品 -> 加入购物车 -> 提交订单 -> 查询订单 -> 修改订单状态
+```
+
+完整设计文档见：[student-manager-design.md](student-manager-design.md)。
+
+## 技术栈
+
+- Java 17
+- Spring Boot 3.5.14
+- Spring MVC
+- MyBatis XML，不使用 MyBatis-Plus
+- MySQL
+- Redis
+- JWT + HandlerInterceptor，不先引入完整 Spring Security
+- Lombok
+- Validation
+- Maven Wrapper
+
+## 当前状态
+
+已完成：
+
+- 已创建项目设计文档：`docs/student-manager-design.md`
+- 当前仓库是 Spring Boot 基础骨架
+- `pom.xml` 已包含 Web、Validation、Redis、MyBatis、MySQL、Lombok、测试依赖
+- 用户已创建 MySQL 数据库 `demo3_db`，并授权 `chiye` 用户访问
+- 已确认本项目要重新完整实现用户注册/登录/JWT，不从旧项目复制认证模块
+- 已创建 6 张表：`user`、`category`、`dish`、`shopping_cart`、`orders`、`order_detail`
+- 已实现用户注册、登录、退出登录、查询当前用户的基础代码
+- 已实现 JWT 工具、Redis 登录态、JWT 拦截器、`BaseContext` 当前用户上下文
+- 已完成用户模块 HTTP 联调：注册成功、登录成功、带 token 查询当前用户成功、退出后旧 token 返回 401
+- 已实现分类模块基础 CRUD：新增分类、查询分类列表、修改分类、删除分类
+- 删除分类时已预留商品引用检查：`DishMapper.countByCategoryId`
+- 已实现商品模块基础接口：新增商品、分页查询、按分类查询、修改商品、上下架商品
+- `/dish/list` 已接入 Redis 缓存，商品新增/修改/上下架后会删除对应分类商品列表缓存
+- 已实现购物车模块：加入购物车、修改数量、查看购物车、清空购物车
+- 购物车使用 `BaseContext` 获取当前用户 ID，前端不传 `userId`
+- 已实现订单模块：提交订单、订单详情、订单分页、取消订单、完成订单
+- 下单使用 `@Transactional`，保证订单主表、订单明细、购物车清空同时成功或回滚
+- 已补充订单支付接口：`PUT /order/{id}/pay`
+- 已整理接口联调文档：`docs/API_TEST.md`
+
+正在进行：
+
+- 核心功能闭环已完成，下一步按 `docs/API_TEST.md` 做完整回归联调
+
+## 重要约定
+
+- 后端学习优先，前端只关注如何和后端接口交互。
+- 每个功能按链路讲解：请求从哪里来 -> Controller -> Service -> Mapper/XML -> 数据库变化 -> Result 返回 -> 为什么这样设计。
+- Controller 不直接调用 Mapper。
+- Service 负责业务逻辑、事务、缓存删除、状态流转。
+- DTO 接收请求，VO 返回响应，Entity 对应数据库表。
+- 所有接口统一返回 `Result<T>`。
+- 业务异常使用 `BusinessException`，统一由 `GlobalExceptionHandler` 处理。
+- 当前用户 ID 必须由后端从 JWT 解析并放入 `BaseContext`，不能让前端传。
+- 请求结束必须清理 `ThreadLocal`，避免线程复用导致用户串号。
+- 下单必须使用 `@Transactional`。
+- 金额计算必须使用 `BigDecimal`，不能使用 `double`。
+- SQL 继续使用 MyBatis XML。
+- 新功能要小步实现，保持已有功能不破坏，每阶段运行测试或说明验证方式。
+
+## 数据库信息
+
+- 数据库：`demo3_db`
+- 本地配置文件：`src/main/resources/application.properties`
+- 当前配置中用户名为 `chiye`，密码字段存在于本地配置；后续文档不重复暴露更多敏感信息。
+
+主要表：
+
+- `user`：用户表，用于重新实现注册、登录、JWT 鉴权
+- `category`：商品分类表
+- `dish`：商品表
+- `shopping_cart`：购物车表
+- `orders`：订单主表
+- `order_detail`：订单明细表
+
+订单状态：
+
+- `1`：待支付
+- `2`：已支付
+- `3`：已完成
+- `4`：已取消
+
+## 接口列表
+
+分类接口：
+
+- `POST /category`：新增分类
+- `GET /category/list`：查询分类列表
+- `PUT /category/{id}`：修改分类
+- `DELETE /category/{id}`：删除分类
+
+商品接口：
+
+- `POST /dish`：新增商品
+- `GET /dish/page`：分页查询商品
+- `GET /dish/list`：根据分类查询商品，计划使用 Redis 缓存
+- `PUT /dish/{id}`：修改商品
+- `PUT /dish/{id}/status`：商品上下架
+
+购物车接口：
+
+- `POST /cart/add`：加入购物车
+- `PUT /cart/update`：修改购物车数量
+- `GET /cart/list`：查看当前用户购物车
+- `DELETE /cart/clean`：清空当前用户购物车
+
+订单接口：
+
+- `POST /order/submit`：根据购物车提交订单
+- `GET /order/{id}`：查询订单详情
+- `GET /order/page`：分页查询订单
+- `PUT /order/{id}/cancel`：取消订单
+- `PUT /order/{id}/complete`：完成订单
+
+## 关键文件
+
+已有文件：
+
+- `pom.xml`：Maven 依赖配置
+- `src/main/resources/application.properties`：项目名、端口、MySQL、MyBatis 基础配置
+- `docs/student-manager-design.md`：完整设计文档
+- `docs/PROJECT_CONTEXT.md`：当前上下文文件
+- `src/main/java/demo3/demo3_068/controller/UserController.java`：用户接口入口
+- `src/main/java/demo3/demo3_068/service/impl/UserServiceImpl.java`：用户注册、登录、退出、当前用户业务逻辑
+- `src/main/java/demo3/demo3_068/mapper/UserMapper.java`：用户表 Mapper 接口
+- `src/main/resources/mapper/UserMapper.xml`：用户表 SQL
+- `src/main/java/demo3/demo3_068/utils/JwtUtil.java`：JWT 生成和解析
+- `src/main/java/demo3/demo3_068/interceptor/JwtTokenInterceptor.java`：JWT + Redis 登录态校验
+- `src/main/java/demo3/demo3_068/config/WebMvcConfig.java`：拦截器注册配置
+- `src/main/java/demo3/demo3_068/controller/CategoryController.java`：分类接口入口
+- `src/main/java/demo3/demo3_068/service/impl/CategoryServiceImpl.java`：分类查重、存在性检查、删除保护
+- `src/main/java/demo3/demo3_068/mapper/CategoryMapper.java`：分类表 Mapper 接口
+- `src/main/resources/mapper/CategoryMapper.xml`：分类表 SQL
+- `src/main/java/demo3/demo3_068/mapper/DishMapper.java`：当前仅提供分类删除前的商品数量检查
+- `src/main/resources/mapper/DishMapper.xml`：商品表 SQL
+- `src/main/java/demo3/demo3_068/controller/DishController.java`：商品接口入口
+- `src/main/java/demo3/demo3_068/service/impl/DishServiceImpl.java`：商品分类校验、查重、分页、缓存逻辑
+- `src/main/java/demo3/demo3_068/controller/CartController.java`：购物车接口入口
+- `src/main/java/demo3/demo3_068/service/impl/CartServiceImpl.java`：购物车用户隔离、商品上架校验、数量累加、金额计算
+- `src/main/java/demo3/demo3_068/mapper/ShoppingCartMapper.java`：购物车 Mapper 接口
+- `src/main/resources/mapper/ShoppingCartMapper.xml`：购物车表 SQL
+- `src/main/java/demo3/demo3_068/controller/OrderController.java`：订单接口入口
+- `src/main/java/demo3/demo3_068/service/impl/OrderServiceImpl.java`：下单事务、订单详情、分页、状态流转
+- `src/main/java/demo3/demo3_068/mapper/OrdersMapper.java`：订单主表 Mapper 接口
+- `src/main/resources/mapper/OrdersMapper.xml`：订单主表 SQL
+- `src/main/java/demo3/demo3_068/mapper/OrderDetailMapper.java`：订单明细 Mapper 接口
+- `src/main/resources/mapper/OrderDetailMapper.xml`：订单明细 SQL
+- `docs/API_TEST.md`：接口联调命令和数据库验证 SQL
+
+计划创建：
+
+- `sql/schema.sql`
+- `src/main/java/demo3/demo3_068/common/Result.java`
+- `src/main/java/demo3/demo3_068/common/PageResult.java`
+- `src/main/java/demo3/demo3_068/common/BaseContext.java`
+- `src/main/java/demo3/demo3_068/exception/BusinessException.java`
+- `src/main/java/demo3/demo3_068/exception/GlobalExceptionHandler.java`
+- `src/main/java/demo3/demo3_068/controller/*Controller.java`
+- `src/main/java/demo3/demo3_068/service/*Service.java`
+- `src/main/java/demo3/demo3_068/service/impl/*ServiceImpl.java`
+- `src/main/java/demo3/demo3_068/mapper/*Mapper.java`
+- `src/main/resources/mapper/*Mapper.xml`
+- `src/main/java/demo3/demo3_068/dto/*DTO.java`
+- `src/main/java/demo3/demo3_068/vo/*VO.java`
+- `src/main/java/demo3/demo3_068/entity/*.java`
+
+## 常用命令
+
+启动项目：
+
+```bash
+./mvnw spring-boot:run
+```
+
+运行测试：
+
+```bash
+./mvnw test
+```
+
+查看项目文件：
+
+```bash
+find src -maxdepth 4 -type f | sort
+```
+
+## 已知问题
+
+- 用户注册登录代码已实现，但尚未启动服务做 HTTP 接口联调。
+- 登录接口依赖 Redis；联调前需要确认本地或 Docker Redis 正在运行。
+- 管理员和普通用户权限第一版可先预留 `role`，是否严格区分待确认。
+
+## 下一步计划
+
+1. 重启项目，验证新增的 `PUT /order/{id}/pay`。
+2. 按 `docs/API_TEST.md` 从登录到订单完整跑一遍。
+3. 后续可进入前端页面或继续补管理权限。
+
+## 待用户补充
+
+- 是否第一版就区分管理员和普通用户权限。
+- 是否需要原生 HTML/CSS/JS 页面，还是先只做后端接口。
+- Redis 是否使用本地环境。

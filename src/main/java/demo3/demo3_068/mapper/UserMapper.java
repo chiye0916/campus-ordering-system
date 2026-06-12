@@ -1,0 +1,13 @@
+package demo3.demo3_068.mapper;
+
+import demo3.demo3_068.entity.User;
+import org.apache.ibatis.annotations.Param;
+
+public interface UserMapper {
+
+    User selectByUsername(@Param("username") String username);
+
+    User selectById(@Param("id") Long id);
+
+    int insert(User user);
+}

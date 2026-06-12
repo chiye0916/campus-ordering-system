@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.ShoppingCartMapper">
+
+    <resultMap id="ShoppingCartResultMap" type="demo3.demo3_068.entity.ShoppingCart">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="dish_id" property="dishId"/>
+        <result column="dish_name" property="dishName"/>
+        <result column="dish_price" property="dishPrice"/>
+        <result column="quantity" property="quantity"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <select id="selectByUserIdAndDishId" resultMap="ShoppingCartResultMap">
+        select id, user_id, dish_id, dish_name, dish_price, quantity, create_time, update_time
+        from shopping_cart
+        where user_id = #{userId}
+          and dish_id = #{dishId}
+    </select>
+
+    <select id="selectByUserId" resultMap="ShoppingCartResultMap">
+        select id, user_id, dish_id, dish_name, dish_price, quantity, create_time, update_time
+        from shopping_cart
+        where user_id = #{userId}
+        order by id asc
+    </select>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.ShoppingCart"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into shopping_cart (user_id, dish_id, dish_name, dish_price, quantity)
+        values (#{userId}, #{dishId}, #{dishName}, #{dishPrice}, #{quantity})
+    </insert>
+
+    <update id="updateQuantityById">
+        update shopping_cart
+        set quantity = #{quantity}
+        where id = #{id}
+    </update>
+
+    <delete id="deleteByUserId">
+        delete from shopping_cart
+        where user_id = #{userId}
+    </delete>
+
+    <delete id="deleteByUserIdAndDishId">
+        delete from shopping_cart
+        where user_id = #{userId}
+          and dish_id = #{dishId}
+    </delete>
+</mapper>

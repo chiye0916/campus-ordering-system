@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.OrdersMapper">
+
+    <resultMap id="OrdersResultMap" type="demo3.demo3_068.entity.Orders">
+        <id column="id" property="id"/>
+        <result column="number" property="number"/>
+        <result column="user_id" property="userId"/>
+        <result column="status" property="status"/>
+        <result column="amount" property="amount"/>
+        <result column="remark" property="remark"/>
+        <result column="order_time" property="orderTime"/>
+        <result column="pay_time" property="payTime"/>
+        <result column="cancel_time" property="cancelTime"/>
+        <result column="complete_time" property="completeTime"/>
+    </resultMap>
+
+    <select id="selectById" resultMap="OrdersResultMap">
+        select id, number, user_id, status, amount, remark, order_time, pay_time, cancel_time, complete_time
+        from orders
+        where id = #{id}
+    </select>
+
+    <select id="selectPage" resultMap="OrdersResultMap">
+        select id, number, user_id, status, amount, remark, order_time, pay_time, cancel_time, complete_time
+        from orders
+        <where>
+            <if test="userId != null">
+                user_id = #{userId}
+            </if>
+            <if test="query.status != null">
+                and status = #{query.status}
+            </if>
+        </where>
+        order by order_time desc, id desc
+        limit #{offset}, #{pageSize}
+    </select>
+
+    <select id="countPage" resultType="long">
+        select count(*)
+        from orders
+        <where>
+            <if test="userId != null">
+                user_id = #{userId}
+            </if>
+            <if test="query.status != null">
+                and status = #{query.status}
+            </if>
+        </where>
+    </select>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.Orders"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into orders (number, user_id, status, amount, remark, order_time)
+        values (#{number}, #{userId}, #{status}, #{amount}, #{remark}, #{orderTime})
+    </insert>
+
+    <update id="updateStatusById" parameterType="demo3.demo3_068.entity.Orders">
+        update orders
+        set status = #{status},
+            pay_time = #{payTime},
+            cancel_time = #{cancelTime},
+            complete_time = #{completeTime}
+        where id = #{id}
+    </update>
+</mapper>

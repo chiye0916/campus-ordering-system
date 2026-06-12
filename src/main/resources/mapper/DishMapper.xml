@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.DishMapper">
+
+    <resultMap id="DishResultMap" type="demo3.demo3_068.entity.Dish">
+        <id column="id" property="id"/>
+        <result column="category_id" property="categoryId"/>
+        <result column="name" property="name"/>
+        <result column="price" property="price"/>
+        <result column="image" property="image"/>
+        <result column="description" property="description"/>
+        <result column="status" property="status"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <select id="countByCategoryId" resultType="int">
+        select count(*)
+        from dish
+        where category_id = #{categoryId}
+    </select>
+
+    <select id="selectById" resultMap="DishResultMap">
+        select id, category_id, name, price, image, description, status, create_time, update_time
+        from dish
+        where id = #{id}
+    </select>
+
+    <select id="selectByName" resultMap="DishResultMap">
+        select id, category_id, name, price, image, description, status, create_time, update_time
+        from dish
+        where name = #{name}
+    </select>
+
+    <select id="selectByNameExcludeId" resultMap="DishResultMap">
+        select id, category_id, name, price, image, description, status, create_time, update_time
+        from dish
+        where name = #{name}
+          and id != #{id}
+    </select>
+
+    <select id="selectPage" resultMap="DishResultMap">
+        select id, category_id, name, price, image, description, status, create_time, update_time
+        from dish
+        <where>
+            <if test="query.name != null and query.name != ''">
+                and name like concat('%', #{query.name}, '%')
+            </if>
+            <if test="query.categoryId != null">
+                and category_id = #{query.categoryId}
+            </if>
+            <if test="query.status != null">
+                and status = #{query.status}
+            </if>
+        </where>
+        order by id desc
+        limit #{offset}, #{pageSize}
+    </select>
+
+    <select id="countPage" resultType="long">
+        select count(*)
+        from dish
+        <where>
+            <if test="query.name != null and query.name != ''">
+                and name like concat('%', #{query.name}, '%')
+            </if>
+            <if test="query.categoryId != null">
+                and category_id = #{query.categoryId}
+            </if>
+            <if test="query.status != null">
+                and status = #{query.status}
+            </if>
+        </where>
+    </select>
+
+    <select id="selectAvailableByCategoryId" resultMap="DishResultMap">
+        select id, category_id, name, price, image, description, status, create_time, update_time
+        from dish
+        where category_id = #{categoryId}
+          and status = 1
+        order by id asc
+    </select>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.Dish"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into dish (category_id, name, price, image, description, status)
+        values (#{categoryId}, #{name}, #{price}, #{image}, #{description}, #{status})
+    </insert>
+
+    <update id="updateById" parameterType="demo3.demo3_068.entity.Dish">
+        update dish
+        set category_id = #{categoryId},
+            name = #{name},
+            price = #{price},
+            image = #{image},
+            description = #{description},
+            status = #{status}
+        where id = #{id}
+    </update>
+
+    <update id="updateStatusById">
+        update dish
+        set status = #{status}
+        where id = #{id}
+    </update>
+</mapper>
