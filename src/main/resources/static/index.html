@@ -3,167 +3,263 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Campus Dining</title>
+  <title>Executive Dining</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="side-nav">
-      <div class="brand">
-        <div class="brand-mark">CD</div>
+  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+  <section id="loginPage" class="login-page">
+    <div class="login-ambient">
+      <div class="brand-lockup">
+        <span class="brand-mark">ys</span>
+        <span>ye style</span>
+      </div>
+      <h1>Executive Dining</h1>
+      <p>为商务会议、企业办公与高效日程设计的品质点餐体验。</p>
+      <div class="login-highlights">
+        <span>精选餐品</span>
+        <span>企业场景</span>
+        <span>高效下单</span>
+      </div>
+    </div>
+
+    <form id="loginForm" class="login-card">
+      <div>
+        <p class="eyebrow">Business Portal</p>
+        <h2>欢迎回来</h2>
+        <p class="muted">登录后进入点餐工作台，管理员可访问经营后台。</p>
+      </div>
+
+      <label class="field">
+        <span>用户名 / 手机号</span>
+        <input id="usernameInput" type="text" autocomplete="username" placeholder="请输入账号">
+      </label>
+
+      <label class="field">
+        <span>密码</span>
+        <input id="passwordInput" type="password" autocomplete="current-password" placeholder="请输入密码">
+      </label>
+
+      <div class="login-options">
+        <label class="check-line">
+          <input id="rememberInput" type="checkbox" checked>
+          <span>记住我</span>
+        </label>
+        <button class="link-button" type="button" data-action="forgot-password">忘记密码</button>
+      </div>
+
+      <button class="button button-primary button-block" type="submit">登录</button>
+
+      <div class="login-demo">
+        <button class="chip-button" type="button" data-action="fill-user">普通用户 zhangsan</button>
+        <button class="chip-button" type="button" data-action="fill-admin">管理员 admin</button>
+      </div>
+    </form>
+  </section>
+
+  <section id="appPage" class="app-page hidden">
+    <header class="top-nav">
+      <div class="nav-brand">
+        <span class="brand-mark">ys</span>
         <div>
-          <h1>Campus Dining</h1>
-          <p>Order Console</p>
+          <strong>ye style</strong>
+          <small>Executive Dining</small>
         </div>
       </div>
 
-      <nav class="nav-group" aria-label="主导航">
-        <button class="nav-button active" data-view="menuView">点餐</button>
-        <button class="nav-button" data-view="orderView">订单</button>
-        <button class="nav-button" data-view="manageView">管理</button>
+      <nav class="nav-links" aria-label="主导航">
+        <button class="nav-link active" data-view="homeView">首页</button>
+        <button class="nav-link" data-view="menuView">商务套餐</button>
+        <button class="nav-link" data-view="ordersView">我的订单</button>
+        <button id="adminNavBtn" class="nav-link hidden" data-view="adminView">管理后台</button>
       </nav>
 
-      <section class="session-panel">
-        <div id="guestPanel">
-          <label>
-            用户名
-            <input id="usernameInput" type="text" autocomplete="username" value="zhangsan">
-          </label>
-          <label>
-            密码
-            <input id="passwordInput" type="password" autocomplete="current-password" value="123456">
-          </label>
-          <label>
-            昵称
-            <input id="nicknameInput" type="text" value="商务用户">
-          </label>
-          <div class="button-row">
-            <button id="loginBtn" class="primary-button">登录</button>
-            <button id="registerBtn" class="ghost-button">注册</button>
+      <div class="user-area">
+        <div class="user-card">
+          <span id="userInitial">U</span>
+          <div>
+            <strong id="currentUserName">未登录</strong>
+            <small id="currentUserRole">USER</small>
+          </div>
+        </div>
+        <button id="logoutBtn" class="icon-button" type="button" title="退出登录">退出</button>
+      </div>
+    </header>
+
+    <main class="main-shell">
+      <section id="homeView" class="view active">
+        <div class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Corporate Dining</p>
+            <h2>高效商务用餐，从一份品质餐品开始。</h2>
+            <p>覆盖会议餐、加班餐与日常办公用餐，让企业点餐流程更清晰、更稳定、更有质感。</p>
+            <div class="hero-actions">
+              <button class="button button-primary" type="button" data-view-link="menuView">开始点餐</button>
+              <button class="button button-secondary" type="button" data-view-link="ordersView">查看订单</button>
+            </div>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <div class="plate-card">
+              <span>Signature Set</span>
+              <strong>商务精选餐</strong>
+              <small>Ready in 18 min</small>
+            </div>
           </div>
         </div>
 
-        <div id="userPanel" class="hidden">
-          <p class="muted-label">当前用户</p>
-          <strong id="currentUser">未登录</strong>
-          <button id="logoutBtn" class="ghost-button full-button">退出登录</button>
-        </div>
+        <div class="metric-grid" id="homeMetrics"></div>
       </section>
-    </aside>
 
-    <main class="main-content">
-      <header class="top-bar">
-        <div>
-          <p class="muted-label">简化版校园点餐系统</p>
-          <h2 id="viewTitle">点餐</h2>
-        </div>
-        <div id="toast" class="toast" role="status">Ready</div>
-      </header>
-
-      <section id="menuView" class="view active">
-        <div class="content-grid">
-          <section class="workspace">
-            <div class="section-head">
+      <section id="menuView" class="view">
+        <div class="order-layout">
+          <section class="panel menu-panel">
+            <div class="panel-head">
               <div>
-                <p class="muted-label">商品分类</p>
-                <h3>菜单</h3>
+                <p class="eyebrow">Menu</p>
+                <h2>精选餐品</h2>
               </div>
-              <button id="refreshMenuBtn" class="ghost-button">刷新</button>
+              <button id="refreshMenuBtn" class="button button-secondary" type="button">刷新菜单</button>
             </div>
-            <div id="categoryTabs" class="tabs"></div>
-            <div id="dishList" class="dish-grid"></div>
+            <div id="categoryTabs" class="category-tabs"></div>
+            <div id="dishList" class="product-grid"></div>
           </section>
 
-          <aside class="cart-panel">
-            <div class="section-head">
+          <aside class="panel cart-panel">
+            <div class="panel-head compact">
               <div>
-                <p class="muted-label">购物车</p>
-                <h3>当前订单</h3>
+                <p class="eyebrow">Cart</p>
+                <h2>购物车</h2>
               </div>
-              <button id="cleanCartBtn" class="ghost-button">清空</button>
+              <button id="cleanCartBtn" class="text-button" type="button">清空</button>
             </div>
             <div id="cartList" class="cart-list"></div>
-            <label>
-              备注
-              <textarea id="remarkInput" rows="3" placeholder="少辣、打包、餐具需求"></textarea>
+            <label class="field">
+              <span>配送地址</span>
+              <input id="addressInput" type="text" placeholder="例如：A 座 18F 会议室">
             </label>
-            <div class="cart-total">
+            <label class="field">
+              <span>备注</span>
+              <textarea id="remarkInput" rows="3" placeholder="少辣、餐具数量、会议时间等"></textarea>
+            </label>
+            <div class="cart-summary">
               <span>合计</span>
               <strong id="cartTotal">¥0.00</strong>
             </div>
-            <button id="submitOrderBtn" class="primary-button full-button">提交订单</button>
+            <button id="submitOrderBtn" class="button button-primary button-block" type="button">提交订单</button>
           </aside>
         </div>
       </section>
 
-      <section id="orderView" class="view">
-        <div class="content-grid">
-          <section class="workspace">
-            <div class="section-head">
+      <section id="ordersView" class="view">
+        <div class="order-layout">
+          <section class="panel">
+            <div class="panel-head">
               <div>
-                <p class="muted-label">订单管理</p>
-                <h3>订单列表</h3>
+                <p class="eyebrow">Orders</p>
+                <h2>订单列表</h2>
               </div>
-              <button id="refreshOrdersBtn" class="ghost-button">刷新</button>
+              <button id="refreshOrdersBtn" class="button button-secondary" type="button">刷新订单</button>
             </div>
-            <div id="orderList" class="table-list"></div>
+            <div id="orderList" class="table-surface"></div>
           </section>
 
-          <aside class="cart-panel">
-            <div class="section-head">
+          <aside class="panel detail-panel">
+            <div class="panel-head compact">
               <div>
-                <p class="muted-label">订单详情</p>
-                <h3 id="orderDetailTitle">未选择</h3>
+                <p class="eyebrow">Detail</p>
+                <h2 id="orderDetailTitle">订单详情</h2>
               </div>
             </div>
-            <div id="orderDetail" class="detail-panel"></div>
+            <div id="orderDetail" class="detail-content empty-state">请选择一笔订单查看详情</div>
           </aside>
         </div>
       </section>
 
-      <section id="manageView" class="view">
-        <div class="manage-grid">
-          <section class="workspace">
-            <div class="section-head">
-              <div>
-                <p class="muted-label">分类</p>
-                <h3>分类维护</h3>
-              </div>
-            </div>
-            <form id="categoryForm" class="compact-form">
-              <input id="categoryNameInput" type="text" placeholder="分类名称" required>
-              <input id="categorySortInput" type="number" min="0" placeholder="排序" required>
-              <button class="primary-button" type="submit">新增</button>
-            </form>
-            <div id="manageCategoryList" class="table-list"></div>
-          </section>
+      <section id="adminView" class="view">
+        <div class="admin-layout">
+          <aside class="admin-sidebar">
+            <button class="admin-menu active" data-admin-tab="overviewPanel">数据概览</button>
+            <button class="admin-menu" data-admin-tab="adminOrdersPanel">订单管理</button>
+            <button class="admin-menu" data-admin-tab="adminDishesPanel">菜品管理</button>
+            <button class="admin-menu" data-admin-tab="adminCategoriesPanel">分类管理</button>
+            <button class="admin-menu" data-admin-tab="adminUsersPanel">用户管理</button>
+          </aside>
 
-          <section class="workspace">
-            <div class="section-head">
-              <div>
-                <p class="muted-label">商品</p>
-                <h3>商品维护</h3>
+          <div class="admin-content">
+            <section id="overviewPanel" class="admin-panel active">
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Dashboard</p>
+                    <h2>数据概览</h2>
+                  </div>
+                  <button id="refreshDashboardBtn" class="button button-secondary" type="button">刷新</button>
+                </div>
+                <div id="dashboardMetrics" class="metric-grid"></div>
+                <div id="hotDishList" class="table-surface compact-table"></div>
               </div>
-              <button id="refreshDishPageBtn" class="ghost-button">刷新</button>
-            </div>
-            <form id="dishForm" class="dish-form">
-              <select id="dishCategoryInput" required></select>
-              <input id="dishNameInput" type="text" placeholder="商品名称" required>
-              <input id="dishPriceInput" type="number" min="0.01" step="0.01" placeholder="价格" required>
-              <select id="dishStatusInput" required>
-                <option value="1">上架</option>
-                <option value="0">下架</option>
-              </select>
-              <input id="dishImageInput" type="text" placeholder="图片地址，可空">
-              <textarea id="dishDescriptionInput" rows="2" placeholder="商品描述"></textarea>
-              <button class="primary-button" type="submit">新增商品</button>
-            </form>
-            <div id="manageDishList" class="table-list"></div>
-          </section>
+            </section>
+
+            <section id="adminOrdersPanel" class="admin-panel">
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Management</p>
+                    <h2>订单管理</h2>
+                  </div>
+                  <button id="refreshAdminOrdersBtn" class="button button-secondary" type="button">刷新</button>
+                </div>
+                <div id="adminOrderList" class="table-surface"></div>
+              </div>
+            </section>
+
+            <section id="adminDishesPanel" class="admin-panel">
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Catalog</p>
+                    <h2>菜品管理</h2>
+                  </div>
+                  <button id="newDishBtn" class="button button-primary" type="button">新增菜品</button>
+                </div>
+                <div id="manageDishList" class="table-surface"></div>
+              </div>
+            </section>
+
+            <section id="adminCategoriesPanel" class="admin-panel">
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Category</p>
+                    <h2>分类管理</h2>
+                  </div>
+                  <button id="newCategoryBtn" class="button button-primary" type="button">新增分类</button>
+                </div>
+                <div id="manageCategoryList" class="table-surface compact-table"></div>
+              </div>
+            </section>
+
+            <section id="adminUsersPanel" class="admin-panel">
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Users</p>
+                    <h2>用户管理</h2>
+                  </div>
+                </div>
+                <div class="empty-state">
+                  当前后端暂未提供用户列表接口。后续可新增 `GET /user/page` 后接入真实用户管理。
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
       </section>
     </main>
-  </div>
+  </section>
+
+  <div id="modalRoot" class="modal-root hidden"></div>
 
   <script src="/app.js"></script>
 </body>
