@@ -57,12 +57,26 @@
         values (#{number}, #{userId}, #{status}, #{amount}, #{remark}, #{orderTime})
     </insert>
 
-    <update id="updateStatusById" parameterType="demo3.demo3_068.entity.Orders">
+    <update id="updateToPaidById">
         update orders
-        set status = #{status},
-            pay_time = #{payTime},
-            cancel_time = #{cancelTime},
+        set status = #{newStatus},
+            pay_time = #{payTime}
+        where id = #{id}
+          and status = #{oldStatus}
+    </update>
+
+    <update id="updateToCancelledById">
+        update orders
+        set status = #{newStatus},
+            cancel_time = #{cancelTime}
+        where id = #{id}
+    </update>
+
+    <update id="updateToCompletedById">
+        update orders
+        set status = #{newStatus},
             complete_time = #{completeTime}
         where id = #{id}
+          and status = #{oldStatus}
     </update>
 </mapper>

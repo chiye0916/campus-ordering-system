@@ -5,9 +5,11 @@ import demo3.demo3_068.common.Constants;
 import demo3.demo3_068.common.PageResult;
 import demo3.demo3_068.dto.OrderPageQueryDTO;
 import demo3.demo3_068.dto.OrderSubmitDTO;
+import demo3.demo3_068.entity.Dish;
 import demo3.demo3_068.entity.OrderDetail;
 import demo3.demo3_068.entity.Orders;
 import demo3.demo3_068.entity.ShoppingCart;
+import demo3.demo3_068.mapper.DishMapper;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.OrderDetailMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
@@ -24,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -36,13 +39,16 @@ public class OrderServiceImpl implements OrderService {
     private final OrdersMapper ordersMapper;
     private final OrderDetailMapper orderDetailMapper;
     private final ShoppingCartMapper shoppingCartMapper;
+    private final DishMapper dishMapper;
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
                             OrderDetailMapper orderDetailMapper,
-                            ShoppingCartMapper shoppingCartMapper) {
+                            ShoppingCartMapper shoppingCartMapper,
+                            DishMapper dishMapper) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.shoppingCartMapper = shoppingCartMapper;
+        this.dishMapper = dishMapper;
     }
 
     @Override
@@ -53,6 +59,7 @@ public class OrderServiceImpl implements OrderService {
         if (cartItems.isEmpty()) {
             throw new BusinessException("购物车为空，不能下单");
         }
+        validateCartItems(cartItems);
 
         BigDecimal totalAmount = cartItems.stream()
                 .map(item -> item.getDishPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
@@ -105,11 +112,10 @@ public class OrderServiceImpl implements OrderService {
         }
 
         LocalDateTime payTime = LocalDateTime.now();
-        Orders updateOrder = new Orders();
-        updateOrder.setId(id);
-        updateOrder.setStatus(STATUS_PAID);
-        updateOrder.setPayTime(payTime);
-        ordersMapper.updateStatusById(updateOrder);
+        int rows = ordersMapper.updateToPaidById(id, payTime, STATUS_PENDING_PAYMENT, STATUS_PAID);
+        if (rows == 0) {
+            throw new BusinessException("订单状态已变化，请刷新后重试");
+        }
 
         return OrderPayVO.builder()
                 .orderId(orders.getId())
@@ -130,11 +136,7 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException("订单已取消，不能重复取消");
         }
 
-        Orders updateOrder = new Orders();
-        updateOrder.setId(id);
-        updateOrder.setStatus(STATUS_CANCELLED);
-        updateOrder.setCancelTime(LocalDateTime.now());
-        ordersMapper.updateStatusById(updateOrder);
+        ordersMapper.updateToCancelledById(id, LocalDateTime.now(), STATUS_CANCELLED);
     }
 
     @Override
@@ -144,11 +146,10 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException("只有已支付订单才能完成");
         }
 
-        Orders updateOrder = new Orders();
-        updateOrder.setId(id);
-        updateOrder.setStatus(STATUS_COMPLETED);
-        updateOrder.setCompleteTime(LocalDateTime.now());
-        ordersMapper.updateStatusById(updateOrder);
+        int rows = ordersMapper.updateToCompletedById(id, LocalDateTime.now(), STATUS_PAID, STATUS_COMPLETED);
+        if (rows == 0) {
+            throw new BusinessException("订单状态已变化，请刷新后重试");
+        }
     }
 
     private Orders getOwnOrderOrThrow(Long id) {
@@ -195,6 +196,22 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(401, "未登录");
         }
         return userId;
+    }
+
+    private void validateCartItems(List<ShoppingCart> cartItems) {
+        for (ShoppingCart cartItem : cartItems) {
+            Dish dish = dishMapper.selectById(cartItem.getDishId());
+            if (dish == null) {
+                throw new BusinessException("购物车中存在已删除商品，请刷新购物车后重新下单");
+            }
+            if (!Integer.valueOf(1).equals(dish.getStatus())) {
+                throw new BusinessException("购物车中存在已下架商品，请刷新购物车后重新下单");
+            }
+            if (!Objects.equals(dish.getName(), cartItem.getDishName())
+                    || dish.getPrice().compareTo(cartItem.getDishPrice()) != 0) {
+                throw new BusinessException("商品信息已变化，请刷新购物车后重新下单");
+            }
+        }
     }
 
     private OrderDetail toOrderDetail(Long orderId, ShoppingCart shoppingCart) {

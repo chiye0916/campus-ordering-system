@@ -48,6 +48,7 @@ public class JwtTokenInterceptor implements HandlerInterceptor {
             BaseContext.setCurrentUserRole(jwtClaims.getRole());
             return true;
         } catch (BusinessException e) {
+            BaseContext.clear();
             writeError(response, e.getCode(), e.getMessage());
             return false;
         }

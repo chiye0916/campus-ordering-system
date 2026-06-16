@@ -451,6 +451,44 @@ code=409
 message=购物车为空，不能下单
 ```
 
+商品改价后，旧购物车快照不能直接下单：
+
+```bash
+curl -X POST "$BASE_URL/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
+
+curl -X PUT "$BASE_URL/dish/$DISH_ID" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d "{\"categoryId\":$CATEGORY_ID,\"name\":\"测试鸡腿饭\",\"price\":25.00,\"image\":\"\",\"description\":\"接口测试商品-再次改价\",\"status\":1}"
+
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d '{"remark":"价格变化测试"}'
+```
+
+期望结果：
+
+```text
+code=409
+message=商品信息已变化，请刷新购物车后重新下单
+```
+
+如果后续还要继续使用该商品测试，可以先清空购物车，再重新加入商品，重新加入时购物车会同步当前商品名称和价格：
+
+```bash
+curl -X DELETE "$BASE_URL/cart/clean" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+curl -X POST "$BASE_URL/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
+```
+
 下架商品不能加入购物车：
 
 ```bash
@@ -479,6 +517,22 @@ curl -X PUT "$BASE_URL/dish/$DISH_ID/status" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{"status":1}'
+```
+
+请求体 JSON 格式错误，应该返回 `code=400`：
+
+```bash
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d '{"remark":'
+```
+
+期望结果：
+
+```text
+code=400
+message=请求体格式错误
 ```
 
 ## 7. 登录态测试

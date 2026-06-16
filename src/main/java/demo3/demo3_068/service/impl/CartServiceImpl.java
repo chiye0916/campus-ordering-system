@@ -34,7 +34,7 @@ public class CartServiceImpl implements CartService {
         ShoppingCart existingCart = shoppingCartMapper.selectByUserIdAndDishId(userId, dish.getId());
         if (existingCart != null) {
             int newQuantity = existingCart.getQuantity() + cartAddDTO.getQuantity();
-            shoppingCartMapper.updateQuantityById(existingCart.getId(), newQuantity);
+            shoppingCartMapper.updateItemById(existingCart.getId(), dish.getName(), dish.getPrice(), newQuantity);
             return;
         }
 

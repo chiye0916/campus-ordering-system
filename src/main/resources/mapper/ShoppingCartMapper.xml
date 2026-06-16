@@ -41,6 +41,14 @@
         where id = #{id}
     </update>
 
+    <update id="updateItemById">
+        update shopping_cart
+        set dish_name = #{dishName},
+            dish_price = #{dishPrice},
+            quantity = #{quantity}
+        where id = #{id}
+    </update>
+
     <delete id="deleteByUserId">
         delete from shopping_cart
         where user_id = #{userId}
