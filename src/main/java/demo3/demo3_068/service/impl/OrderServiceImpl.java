@@ -26,7 +26,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -59,9 +58,9 @@ public class OrderServiceImpl implements OrderService {
         if (cartItems.isEmpty()) {
             throw new BusinessException("购物车为空，不能下单");
         }
-        validateCartItems(cartItems);
+        List<ShoppingCart> refreshedCartItems = refreshCartItems(cartItems);
 
-        BigDecimal totalAmount = cartItems.stream()
+        BigDecimal totalAmount = refreshedCartItems.stream()
                 .map(item -> item.getDishPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
@@ -74,7 +73,7 @@ public class OrderServiceImpl implements OrderService {
         orders.setOrderTime(LocalDateTime.now());
         ordersMapper.insert(orders);
 
-        List<OrderDetail> details = cartItems.stream()
+        List<OrderDetail> details = refreshedCartItems.stream()
                 .map(item -> toOrderDetail(orders.getId(), item))
                 .toList();
         orderDetailMapper.insertBatch(details);
@@ -198,20 +197,23 @@ public class OrderServiceImpl implements OrderService {
         return userId;
     }
 
-    private void validateCartItems(List<ShoppingCart> cartItems) {
-        for (ShoppingCart cartItem : cartItems) {
-            Dish dish = dishMapper.selectById(cartItem.getDishId());
-            if (dish == null) {
-                throw new BusinessException("购物车中存在已删除商品，请刷新购物车后重新下单");
-            }
-            if (!Integer.valueOf(1).equals(dish.getStatus())) {
-                throw new BusinessException("购物车中存在已下架商品，请刷新购物车后重新下单");
-            }
-            if (!Objects.equals(dish.getName(), cartItem.getDishName())
-                    || dish.getPrice().compareTo(cartItem.getDishPrice()) != 0) {
-                throw new BusinessException("商品信息已变化，请刷新购物车后重新下单");
-            }
+    private List<ShoppingCart> refreshCartItems(List<ShoppingCart> cartItems) {
+        return cartItems.stream()
+                .map(this::refreshCartItem)
+                .toList();
+    }
+
+    private ShoppingCart refreshCartItem(ShoppingCart cartItem) {
+        Dish dish = dishMapper.selectById(cartItem.getDishId());
+        if (dish == null) {
+            throw new BusinessException("购物车中存在已删除商品，请先移出购物车");
         }
+        if (!Integer.valueOf(1).equals(dish.getStatus())) {
+            throw new BusinessException("购物车中存在已下架商品，请先移出购物车");
+        }
+        cartItem.setDishName(dish.getName());
+        cartItem.setDishPrice(dish.getPrice());
+        return cartItem;
     }
 
     private OrderDetail toOrderDetail(Long orderId, ShoppingCart shoppingCart) {

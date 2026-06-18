@@ -451,7 +451,7 @@ code=409
 message=购物车为空，不能下单
 ```
 
-商品改价后，旧购物车快照不能直接下单：
+商品改价后，购物车应该显示最新价格，并按最新价格下单：
 
 ```bash
 curl -X POST "$BASE_URL/cart/add" \
@@ -464,6 +464,9 @@ curl -X PUT "$BASE_URL/dish/$DISH_ID" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "{\"categoryId\":$CATEGORY_ID,\"name\":\"测试鸡腿饭\",\"price\":25.00,\"image\":\"\",\"description\":\"接口测试商品-再次改价\",\"status\":1}"
 
+curl "$BASE_URL/cart/list" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
 curl -X POST "$BASE_URL/order/submit" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
@@ -473,30 +476,65 @@ curl -X POST "$BASE_URL/order/submit" \
 期望结果：
 
 ```text
-code=409
-message=商品信息已变化，请刷新购物车后重新下单
+cart/list 中该商品 dishPrice 变为 25.00，并出现 changeMessage=价格已更新
+order/submit 返回 code=200
 ```
 
-如果后续还要继续使用该商品测试，可以先清空购物车，再重新加入商品，重新加入时购物车会同步当前商品名称和价格：
+如果后续还要继续使用该商品测试，可以重新加入商品：
 
 ```bash
-curl -X DELETE "$BASE_URL/cart/clean" \
-  -H "Authorization: Bearer $USER_TOKEN"
-
 curl -X POST "$BASE_URL/cart/add" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
 ```
 
-下架商品不能加入购物车：
+下架商品不能加入购物车；如果商品已经在购物车里，购物车会显示为不可购买，下单会失败：
+
+先确保购物车中有该商品：
+
+```bash
+curl -X POST "$BASE_URL/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
+```
+
+下架商品：
 
 ```bash
 curl -X PUT "$BASE_URL/dish/$DISH_ID/status" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{"status":0}'
+```
 
+查看购物车，应该看到 `available=false` 和 `changeMessage=商品已下架，请移出购物车`：
+
+```bash
+curl "$BASE_URL/cart/list" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+提交订单应该失败：
+
+```bash
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d '{"remark":"下架商品测试"}'
+```
+
+期望结果：
+
+```text
+code=409
+message=购物车中存在已下架商品，请先移出购物车
+```
+
+下架商品不能再次加入购物车：
+
+```bash
 curl -X POST "$BASE_URL/cart/add" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \

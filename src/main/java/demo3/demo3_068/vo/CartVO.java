@@ -14,4 +14,7 @@ public class CartVO {
     private BigDecimal dishPrice;
     private Integer quantity;
     private BigDecimal amount;
+    private Integer dishStatus;
+    private Boolean available;
+    private String changeMessage;
 }

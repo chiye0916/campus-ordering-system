@@ -28,8 +28,29 @@
       <div>
         <p class="eyebrow">Business Portal</p>
         <h2>欢迎回来</h2>
-        <p class="muted">登录后进入点餐工作台，管理员可访问经营后台。</p>
+        <p class="muted">请选择账号身份或手动输入账号登录。</p>
       </div>
+
+      <div class="identity-panel">
+        <div class="identity-head">
+          <strong>账号身份选择</strong>
+          <span id="selectedIdentityText">未选择</span>
+        </div>
+        <div class="identity-grid">
+          <button class="identity-card" type="button" data-action="select-login-account" data-account="user">
+            <span class="identity-avatar">张</span>
+            <strong>张三 / zhangsan</strong>
+            <small>普通用户 · 点餐与订单</small>
+          </button>
+          <button class="identity-card" type="button" data-action="select-login-account" data-account="admin">
+            <span class="identity-avatar admin">管</span>
+            <strong>管理员 / admin</strong>
+            <small>管理员 · 经营后台</small>
+          </button>
+        </div>
+      </div>
+
+      <div id="loginRoleHint" class="role-hint">当前登录身份：请先选择账号或手动输入</div>
 
       <label class="field">
         <span>用户名 / 手机号</span>
@@ -49,16 +70,16 @@
         <button class="link-button" type="button" data-action="forgot-password">忘记密码</button>
       </div>
 
-      <button class="button button-primary button-block" type="submit">登录</button>
+      <button id="loginSubmitBtn" class="button button-primary button-block" type="submit">登录</button>
 
-      <div class="login-demo">
-        <button class="chip-button" type="button" data-action="fill-user">普通用户 zhangsan</button>
-        <button class="chip-button" type="button" data-action="fill-admin">管理员 admin</button>
-      </div>
+      <p class="login-register-line">
+        还没有账号？
+        <button class="link-button" type="button" data-action="open-register">立即注册</button>
+      </p>
     </form>
   </section>
 
-  <section id="appPage" class="app-page hidden">
+  <section id="userAppPage" class="app-page hidden">
     <header class="top-nav">
       <div class="nav-brand">
         <span class="brand-mark">ys</span>
@@ -68,11 +89,11 @@
         </div>
       </div>
 
-      <nav class="nav-links" aria-label="主导航">
-        <button class="nav-link active" data-view="homeView">首页</button>
-        <button class="nav-link" data-view="menuView">商务套餐</button>
-        <button class="nav-link" data-view="ordersView">我的订单</button>
-        <button id="adminNavBtn" class="nav-link hidden" data-view="adminView">管理后台</button>
+      <nav class="nav-links" aria-label="用户端导航">
+        <button class="nav-link active" data-user-view="userHomeView">首页</button>
+        <button class="nav-link" data-user-view="userMenuView">商务套餐</button>
+        <button class="nav-link" data-user-view="userOrdersView">我的订单</button>
+        <button class="nav-link" data-user-view="userProfileView">我的权益</button>
       </nav>
 
       <div class="user-area">
@@ -83,35 +104,35 @@
             <small id="currentUserRole">USER</small>
           </div>
         </div>
-        <button id="logoutBtn" class="icon-button" type="button" title="退出登录">退出</button>
+        <button class="icon-button" type="button" data-action="logout">退出</button>
       </div>
     </header>
 
     <main class="main-shell">
-      <section id="homeView" class="view active">
+      <section id="userHomeView" class="view active">
         <div class="hero">
           <div class="hero-copy">
             <p class="eyebrow">Corporate Dining</p>
             <h2>高效商务用餐，从一份品质餐品开始。</h2>
             <p>覆盖会议餐、加班餐与日常办公用餐，让企业点餐流程更清晰、更稳定、更有质感。</p>
             <div class="hero-actions">
-              <button class="button button-primary" type="button" data-view-link="menuView">开始点餐</button>
-              <button class="button button-secondary" type="button" data-view-link="ordersView">查看订单</button>
+              <button class="button button-primary" type="button" data-user-view-link="userMenuView">开始点餐</button>
+              <button class="button button-secondary" type="button" data-user-view-link="userProfileView">查看权益</button>
             </div>
           </div>
           <div class="hero-visual" aria-hidden="true">
             <div class="plate-card">
-              <span>Signature Set</span>
-              <strong>商务精选餐</strong>
-              <small>Ready in 18 min</small>
+              <span>Black Gold Member</span>
+              <strong>企业尊享会员</strong>
+              <small>Priority service</small>
             </div>
           </div>
         </div>
 
-        <div class="metric-grid" id="homeMetrics"></div>
+        <div id="userGrowthSummary" class="growth-layout"></div>
       </section>
 
-      <section id="menuView" class="view">
+      <section id="userMenuView" class="view">
         <div class="order-layout">
           <section class="panel menu-panel">
             <div class="panel-head">
@@ -151,13 +172,13 @@
         </div>
       </section>
 
-      <section id="ordersView" class="view">
+      <section id="userOrdersView" class="view">
         <div class="order-layout">
           <section class="panel">
             <div class="panel-head">
               <div>
                 <p class="eyebrow">Orders</p>
-                <h2>订单列表</h2>
+                <h2>我的订单</h2>
               </div>
               <button id="refreshOrdersBtn" class="button button-secondary" type="button">刷新订单</button>
             </div>
@@ -176,83 +197,115 @@
         </div>
       </section>
 
-      <section id="adminView" class="view">
-        <div class="admin-layout">
-          <aside class="admin-sidebar">
-            <button class="admin-menu active" data-admin-tab="overviewPanel">数据概览</button>
-            <button class="admin-menu" data-admin-tab="adminOrdersPanel">订单管理</button>
-            <button class="admin-menu" data-admin-tab="adminDishesPanel">菜品管理</button>
-            <button class="admin-menu" data-admin-tab="adminCategoriesPanel">分类管理</button>
-            <button class="admin-menu" data-admin-tab="adminUsersPanel">用户管理</button>
-          </aside>
-
-          <div class="admin-content">
-            <section id="overviewPanel" class="admin-panel active">
-              <div class="panel">
-                <div class="panel-head">
-                  <div>
-                    <p class="eyebrow">Dashboard</p>
-                    <h2>数据概览</h2>
-                  </div>
-                  <button id="refreshDashboardBtn" class="button button-secondary" type="button">刷新</button>
-                </div>
-                <div id="dashboardMetrics" class="metric-grid"></div>
-                <div id="hotDishList" class="table-surface compact-table"></div>
+      <section id="userProfileView" class="view">
+        <div class="profile-layout">
+          <section class="panel" id="profileGrowthPanel"></section>
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="eyebrow">Profile</p>
+                <h2>个人信息</h2>
               </div>
-            </section>
+            </div>
+            <div id="profileInfo" class="detail-content"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </section>
 
-            <section id="adminOrdersPanel" class="admin-panel">
-              <div class="panel">
-                <div class="panel-head">
-                  <div>
-                    <p class="eyebrow">Management</p>
-                    <h2>订单管理</h2>
-                  </div>
-                  <button id="refreshAdminOrdersBtn" class="button button-secondary" type="button">刷新</button>
-                </div>
-                <div id="adminOrderList" class="table-surface"></div>
-              </div>
-            </section>
+  <section id="adminAppPage" class="admin-app-page hidden">
+    <aside class="admin-shell-sidebar">
+      <div class="nav-brand admin-brand">
+        <span class="brand-mark">ys</span>
+        <div>
+          <strong>ye style</strong>
+          <small>Admin Console</small>
+        </div>
+      </div>
+      <nav class="admin-shell-menu" aria-label="管理端导航">
+        <button class="admin-menu active" data-admin-tab="adminDashboardView">数据概览</button>
+        <button class="admin-menu" data-admin-tab="adminOrdersView">订单管理</button>
+        <button class="admin-menu" data-admin-tab="adminProductsView">菜品管理</button>
+        <button class="admin-menu" data-admin-tab="adminCategoriesView">分类管理</button>
+        <button class="admin-menu" data-admin-tab="adminUsersView">用户管理</button>
+      </nav>
+      <div class="admin-sidebar-footer">
+        <div class="user-card">
+          <span id="adminInitial">A</span>
+          <div>
+            <strong id="adminUserName">管理员</strong>
+            <small>ADMIN</small>
+          </div>
+        </div>
+        <button class="button button-secondary button-block" type="button" data-action="logout">退出登录</button>
+      </div>
+    </aside>
 
-            <section id="adminDishesPanel" class="admin-panel">
-              <div class="panel">
-                <div class="panel-head">
-                  <div>
-                    <p class="eyebrow">Catalog</p>
-                    <h2>菜品管理</h2>
-                  </div>
-                  <button id="newDishBtn" class="button button-primary" type="button">新增菜品</button>
-                </div>
-                <div id="manageDishList" class="table-surface"></div>
-              </div>
-            </section>
+    <main class="admin-shell-main">
+      <section id="adminDashboardView" class="admin-panel active">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Dashboard</p>
+              <h2>数据概览</h2>
+            </div>
+            <button id="refreshDashboardBtn" class="button button-secondary" type="button">刷新</button>
+          </div>
+          <div id="dashboardMetrics" class="metric-grid"></div>
+          <div id="hotDishList" class="table-surface compact-table"></div>
+        </div>
+      </section>
 
-            <section id="adminCategoriesPanel" class="admin-panel">
-              <div class="panel">
-                <div class="panel-head">
-                  <div>
-                    <p class="eyebrow">Category</p>
-                    <h2>分类管理</h2>
-                  </div>
-                  <button id="newCategoryBtn" class="button button-primary" type="button">新增分类</button>
-                </div>
-                <div id="manageCategoryList" class="table-surface compact-table"></div>
-              </div>
-            </section>
+      <section id="adminOrdersView" class="admin-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Management</p>
+              <h2>订单管理</h2>
+            </div>
+            <button id="refreshAdminOrdersBtn" class="button button-secondary" type="button">刷新</button>
+          </div>
+          <div id="adminOrderList" class="table-surface"></div>
+        </div>
+      </section>
 
-            <section id="adminUsersPanel" class="admin-panel">
-              <div class="panel">
-                <div class="panel-head">
-                  <div>
-                    <p class="eyebrow">Users</p>
-                    <h2>用户管理</h2>
-                  </div>
-                </div>
-                <div class="empty-state">
-                  当前后端暂未提供用户列表接口。后续可新增 `GET /user/page` 后接入真实用户管理。
-                </div>
-              </div>
-            </section>
+      <section id="adminProductsView" class="admin-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Catalog</p>
+              <h2>菜品管理</h2>
+            </div>
+            <button id="newDishBtn" class="button button-primary" type="button">新增菜品</button>
+          </div>
+          <div id="manageDishList" class="table-surface"></div>
+        </div>
+      </section>
+
+      <section id="adminCategoriesView" class="admin-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Category</p>
+              <h2>分类管理</h2>
+            </div>
+            <button id="newCategoryBtn" class="button button-primary" type="button">新增分类</button>
+          </div>
+          <div id="manageCategoryList" class="table-surface compact-table"></div>
+        </div>
+      </section>
+
+      <section id="adminUsersView" class="admin-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Users</p>
+              <h2>用户管理</h2>
+            </div>
+          </div>
+          <div class="empty-state">
+            当前后端暂未提供用户列表接口。后续可新增 `GET /user/page` 后接入真实用户管理。
           </div>
         </div>
       </section>

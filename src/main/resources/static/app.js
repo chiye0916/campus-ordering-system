@@ -7,7 +7,8 @@ const state = {
   cart: [],
   orders: [],
   selectedCategoryId: null,
-  activeView: "homeView"
+  activeView: "login",
+  selectedLoginAccount: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -91,6 +92,10 @@ function isAdmin() {
   return state.user?.role === "ADMIN";
 }
 
+function isUser() {
+  return state.user?.role === "USER";
+}
+
 function setSession(loginVO) {
   state.token = loginVO.token;
   state.user = {
@@ -124,33 +129,52 @@ function clearSession() {
 function renderSession() {
   const loggedIn = Boolean(state.token && state.user);
   $("#loginPage").classList.toggle("hidden", loggedIn);
-  $("#appPage").classList.toggle("hidden", !loggedIn);
-  $("#adminNavBtn").classList.toggle("hidden", !isAdmin());
+  $("#userAppPage").classList.toggle("hidden", !loggedIn || !isUser());
+  $("#adminAppPage").classList.toggle("hidden", !loggedIn || !isAdmin());
 
   if (!loggedIn) {
     return;
   }
 
   const name = state.user.nickname || state.user.username;
-  $("#currentUserName").textContent = name;
-  $("#currentUserRole").textContent = state.user.role;
-  $("#userInitial").textContent = name.slice(0, 1).toUpperCase();
-
-  if (!isAdmin() && state.activeView === "adminView") {
-    switchView("homeView");
+  if (isUser()) {
+    $("#currentUserName").textContent = name;
+    $("#currentUserRole").textContent = "普通用户";
+    $("#userInitial").textContent = name.slice(0, 1).toUpperCase();
+  }
+  if (isAdmin()) {
+    $("#adminUserName").textContent = name;
+    $("#adminInitial").textContent = name.slice(0, 1).toUpperCase();
   }
 }
 
-function switchView(viewId) {
-  if (viewId === "adminView" && !isAdmin()) {
+function switchUserView(viewId) {
+  if (!isUser()) {
+    if (isAdmin()) {
+      switchAdminView("adminDashboardView");
+      showToast("管理员不能进入用户点餐端，已返回管理后台", "error");
+      return;
+    }
     showToast("无管理员权限", "error");
     return;
   }
   state.activeView = viewId;
-  $$(".nav-link").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === viewId);
+  $$(".nav-link[data-user-view]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.userView === viewId);
   });
-  $$(".view").forEach((view) => view.classList.toggle("active", view.id === viewId));
+  $$("#userAppPage .view").forEach((view) => view.classList.toggle("active", view.id === viewId));
+}
+
+function switchAdminView(viewId) {
+  if (!isAdmin()) {
+    showToast("无管理员权限", "error");
+    return;
+  }
+  state.activeView = viewId;
+  $$(".admin-menu").forEach((button) => {
+    button.classList.toggle("active", button.dataset.adminTab === viewId);
+  });
+  $$("#adminAppPage .admin-panel").forEach((view) => view.classList.toggle("active", view.id === viewId));
 }
 
 function openModal({ title, body, confirmText = "确认", cancelText = "取消", danger = false, onConfirm }) {
@@ -197,6 +221,117 @@ function confirmDialog(message, options = {}) {
   });
 }
 
+function selectLoginAccount(account) {
+  const presets = {
+    user: {
+      username: "zhangsan",
+      password: "123456",
+      label: "张三 / zhangsan · 普通用户"
+    },
+    admin: {
+      username: "admin",
+      password: "123456",
+      label: "管理员 / admin · 管理员"
+    }
+  };
+  const selected = presets[account];
+  if (!selected) return;
+  state.selectedLoginAccount = account;
+  $("#usernameInput").value = selected.username;
+  $("#passwordInput").value = selected.password;
+  $("#selectedIdentityText").textContent = selected.label;
+  $("#loginRoleHint").textContent = `当前登录身份：${selected.label}`;
+  $$(".identity-card").forEach((card) => {
+    card.classList.toggle("active", card.dataset.account === account);
+  });
+}
+
+function isValidContact(value) {
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const phonePattern = /^1[3-9]\d{9}$/;
+  return emailPattern.test(value) || phonePattern.test(value);
+}
+
+async function openRegisterModal() {
+  await openModal({
+    title: "注册账号",
+    body: `
+      <div class="form-grid">
+        <label class="field">
+          <span>用户名</span>
+          <input id="registerUsername" type="text" placeholder="3-64 位用户名">
+        </label>
+        <label class="field">
+          <span>手机号 / 邮箱</span>
+          <input id="registerContact" type="text" placeholder="手机号或邮箱">
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input id="registerPassword" type="password" placeholder="至少 6 位">
+        </label>
+        <label class="field">
+          <span>确认密码</span>
+          <input id="registerConfirmPassword" type="password" placeholder="再次输入密码">
+        </label>
+        <label class="field wide">
+          <span>用户类型</span>
+          <select id="registerRole">
+            <option value="USER">普通用户</option>
+            <option value="ADMIN">管理员</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted">当前后端注册接口保存用户名、密码和昵称；手机号/邮箱仅做前端校验演示。</p>
+    `,
+    confirmText: "注册",
+    onConfirm: async () => {
+      const username = $("#registerUsername").value.trim();
+      const contact = $("#registerContact").value.trim();
+      const password = $("#registerPassword").value;
+      const confirmPassword = $("#registerConfirmPassword").value;
+      const role = $("#registerRole").value;
+
+      if (!username || !contact || !password || !confirmPassword) {
+        showToast("注册信息不能为空", "error");
+        return false;
+      }
+      if (!isValidContact(contact)) {
+        showToast("手机号或邮箱格式错误", "error");
+        return false;
+      }
+      if (password !== confirmPassword) {
+        showToast("两次密码不一致", "error");
+        return false;
+      }
+      if (role === "ADMIN") {
+        showToast("当前后端不开放前端注册管理员，请先注册普通用户后由数据库授权", "error");
+        return false;
+      }
+
+      try {
+        await api("/user/register", {
+          method: "POST",
+          body: {
+            username,
+            password,
+            nickname: username
+          }
+        });
+        $("#usernameInput").value = username;
+        $("#passwordInput").value = "";
+        state.selectedLoginAccount = null;
+        $("#selectedIdentityText").textContent = "手动注册账号";
+        $("#loginRoleHint").textContent = `当前登录身份：${username} · 普通用户`;
+        $$(".identity-card").forEach((card) => card.classList.remove("active"));
+        showToast("注册成功，请登录", "success");
+      } catch (error) {
+        showToast(error.message || "注册失败", "error");
+        return false;
+      }
+    }
+  });
+}
+
 function productInitial(name) {
   return (name || "餐").slice(0, 1);
 }
@@ -204,20 +339,47 @@ function productInitial(name) {
 function renderHomeMetrics() {
   const total = state.orders.length;
   const pending = state.orders.filter((order) => order.status === 1 || order.status === 2).length;
-  const amount = state.orders.reduce((sum, order) => sum + Number(order.amount || 0), 0);
   const cartCount = state.cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const growth = 1280 + total * 80 + cartCount * 10;
+  const nextLevelGap = Math.max(0, 1800 - growth);
 
-  $("#homeMetrics").innerHTML = [
-    ["我的订单", total],
-    ["待处理", pending],
-    ["累计金额", money(amount)],
-    ["购物车餐品", cartCount]
-  ].map(([label, value]) => `
-    <article class="metric-card">
-      <span>${label}</span>
-      <strong>${value}</strong>
-    </article>
-  `).join("");
+  $("#userGrowthSummary").innerHTML = `
+    <section class="growth-card">
+      <p class="eyebrow">Membership</p>
+      <h2>企业尊享会员</h2>
+      <p class="muted">成长值 ${growth}，距离黑金会员还差 ${nextLevelGap} 成长值。</p>
+      <div class="progress-track"><span style="width:${Math.min(100, Math.round((growth / 1800) * 100))}%"></span></div>
+    </section>
+    <section class="metric-grid">
+      ${[
+        ["我的订单", total],
+        ["待处理订单", pending],
+        ["成长值", growth],
+        ["购物车餐品", cartCount]
+      ].map(([label, value]) => `
+        <article class="metric-card">
+          <span>${label}</span>
+          <strong>${value}</strong>
+        </article>
+      `).join("")}
+    </section>
+    <section class="benefit-grid">
+      ${["优先配送", "会议餐定制", "专属客服", "企业月结"].map((item) => `
+        <article class="benefit-card">
+          <strong>${item}</strong>
+          <span>已启用</span>
+        </article>
+      `).join("")}
+    </section>
+  `;
+
+  $("#profileGrowthPanel").innerHTML = $("#userGrowthSummary").innerHTML;
+  $("#profileInfo").innerHTML = `
+    <div class="detail-row"><span>用户名</span><strong>${state.user?.username || "-"}</strong></div>
+    <div class="detail-row"><span>昵称</span><strong>${state.user?.nickname || "-"}</strong></div>
+    <div class="detail-row"><span>账号类型</span><strong>普通用户</strong></div>
+    <div class="detail-row"><span>会员等级</span><strong>企业尊享会员</strong></div>
+  `;
 }
 
 function renderDashboard() {
@@ -329,15 +491,19 @@ function renderCart() {
   }
 
   list.innerHTML = state.cart.map((item) => {
-    total += Number(item.amount || 0);
+    const available = item.available !== false;
+    if (available) {
+      total += Number(item.amount || 0);
+    }
     return `
-      <div class="cart-item">
+      <div class="cart-item ${available ? "" : "unavailable"}">
         <div class="cart-main">
           <div>
             <strong>${item.dishName}</strong>
             <p class="subtext">${money(item.dishPrice)} × ${item.quantity}</p>
+            ${item.changeMessage ? `<p class="cart-message">${item.changeMessage}</p>` : ""}
           </div>
-          <span class="price">${money(item.amount)}</span>
+          <span class="price">${available ? money(item.amount) : "不可购买"}</span>
         </div>
         <div class="quantity-row">
           <div class="quantity-actions">
@@ -502,9 +668,14 @@ async function startApp() {
   renderSession();
   if (!state.token) return;
   try {
+    if (isAdmin()) {
+      switchAdminView("adminDashboardView");
+      await refreshAdmin();
+      return;
+    }
+    switchUserView("userHomeView");
     await refreshMenu();
     await loadOrders();
-    if (isAdmin()) await loadAdminDishes();
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -515,7 +686,7 @@ async function submitLogin() {
   const password = $("#passwordInput").value;
 
   if (!username) {
-    showToast("请输入用户名或手机号", "error");
+    showToast("请选择账号或输入用户名", "error");
     return;
   }
   if (!password) {
@@ -532,7 +703,6 @@ async function submitLogin() {
       body: { username, password }
     });
     setSession(data);
-    switchView("homeView");
     await startApp();
     showToast("登录成功", "success");
   } catch (error) {
@@ -560,6 +730,11 @@ async function openOrderConfirm() {
     showToast("购物车为空，请先选择餐品", "error");
     return;
   }
+  const unavailableItem = state.cart.find((item) => item.available === false);
+  if (unavailableItem) {
+    showToast(`${unavailableItem.dishName} 已不可购买，请先从购物车删除`, "error");
+    return;
+  }
 
   const address = $("#addressInput").value.trim();
   if (!address) {
@@ -567,7 +742,9 @@ async function openOrderConfirm() {
     return;
   }
 
-  const total = state.cart.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const total = state.cart
+    .filter((item) => item.available !== false)
+    .reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const remark = $("#remarkInput").value.trim();
   const body = `
     <div class="detail-content">
@@ -602,7 +779,7 @@ async function openOrderConfirm() {
     await loadCart();
     await loadOrders();
     showToast(`订单提交成功：${orderId}`, "success");
-    switchView("ordersView");
+    switchUserView("userOrdersView");
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -729,7 +906,16 @@ function bindEvents() {
     submitLogin();
   };
 
-  $("#logoutBtn").onclick = logout;
+  $("#usernameInput").addEventListener("input", () => {
+    state.selectedLoginAccount = null;
+    $("#selectedIdentityText").textContent = "手动输入账号";
+    $("#loginRoleHint").textContent = "当前登录身份：手动输入账号";
+    $$(".identity-card").forEach((card) => card.classList.remove("active"));
+  });
+
+  $$('[data-action="logout"]').forEach((button) => {
+    button.onclick = logout;
+  });
   $("#submitOrderBtn").onclick = openOrderConfirm;
 
   $("#refreshMenuBtn").onclick = async () => {
@@ -786,13 +972,13 @@ function bindEvents() {
     }
   };
 
-  $$(".nav-link").forEach((button) => {
+  $$(".nav-link[data-user-view]").forEach((button) => {
     button.onclick = async () => {
-      switchView(button.dataset.view);
+      switchUserView(button.dataset.userView);
       try {
-        if (button.dataset.view === "menuView") await refreshMenu();
-        if (button.dataset.view === "ordersView") await loadOrders();
-        if (button.dataset.view === "adminView") await refreshAdmin();
+        if (button.dataset.userView === "userMenuView") await refreshMenu();
+        if (button.dataset.userView === "userOrdersView") await loadOrders();
+        if (button.dataset.userView === "userProfileView") renderHomeMetrics();
       } catch (error) {
         showToast(error.message, "error");
       }
@@ -800,20 +986,34 @@ function bindEvents() {
   });
 
   $$(".admin-menu").forEach((button) => {
-    button.onclick = () => {
-      $$(".admin-menu").forEach((item) => item.classList.remove("active"));
-      $$(".admin-panel").forEach((item) => item.classList.remove("active"));
-      button.classList.add("active");
-      $(`#${button.dataset.adminTab}`).classList.add("active");
+    button.onclick = async () => {
+      switchAdminView(button.dataset.adminTab);
+      try {
+        if (button.dataset.adminTab === "adminDashboardView") await refreshAdmin();
+        if (button.dataset.adminTab === "adminOrdersView") await loadOrders();
+        if (button.dataset.adminTab === "adminProductsView") await loadAdminDishes();
+        if (button.dataset.adminTab === "adminCategoriesView") await loadCategories();
+      } catch (error) {
+        showToast(error.message, "error");
+      }
     };
   });
 
   document.body.addEventListener("click", async (event) => {
     const viewLink = event.target.closest("[data-view-link]");
     if (viewLink) {
-      switchView(viewLink.dataset.viewLink);
-      if (viewLink.dataset.viewLink === "menuView") await refreshMenu();
-      if (viewLink.dataset.viewLink === "ordersView") await loadOrders();
+      switchUserView(viewLink.dataset.viewLink);
+      if (viewLink.dataset.viewLink === "userMenuView") await refreshMenu();
+      if (viewLink.dataset.viewLink === "userOrdersView") await loadOrders();
+      return;
+    }
+
+    const userViewLink = event.target.closest("[data-user-view-link]");
+    if (userViewLink) {
+      switchUserView(userViewLink.dataset.userViewLink);
+      if (userViewLink.dataset.userViewLink === "userMenuView") await refreshMenu();
+      if (userViewLink.dataset.userViewLink === "userOrdersView") await loadOrders();
+      if (userViewLink.dataset.userViewLink === "userProfileView") renderHomeMetrics();
       return;
     }
 
@@ -823,14 +1023,12 @@ function bindEvents() {
     const id = Number(target.dataset.id);
 
     try {
-      if (action === "fill-user") {
-        $("#usernameInput").value = "zhangsan";
-        $("#passwordInput").value = "123456";
+      if (action === "select-login-account") {
+        selectLoginAccount(target.dataset.account);
       }
 
-      if (action === "fill-admin") {
-        $("#usernameInput").value = "admin";
-        $("#passwordInput").value = "123456";
+      if (action === "open-register") {
+        await openRegisterModal();
       }
 
       if (action === "forgot-password") {
@@ -874,7 +1072,7 @@ function bindEvents() {
 
       if (action === "order-detail") {
         const order = await api(`/order/${id}`);
-        if (state.activeView === "adminView") {
+        if (isAdmin()) {
           await openModal({
             title: `订单 ${order.number}`,
             body: orderDetailHtml(order),
@@ -883,7 +1081,7 @@ function bindEvents() {
           });
         } else {
           renderOrderDetail(order);
-          switchView("ordersView");
+          switchUserView("userOrdersView");
         }
       }
 

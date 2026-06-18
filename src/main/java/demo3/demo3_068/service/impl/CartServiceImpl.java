@@ -101,13 +101,40 @@ public class CartServiceImpl implements CartService {
     }
 
     private CartVO toCartVO(ShoppingCart shoppingCart) {
-        BigDecimal amount = shoppingCart.getDishPrice().multiply(BigDecimal.valueOf(shoppingCart.getQuantity()));
+        Dish dish = dishMapper.selectById(shoppingCart.getDishId());
+        if (dish == null) {
+            BigDecimal amount = shoppingCart.getDishPrice().multiply(BigDecimal.valueOf(shoppingCart.getQuantity()));
+            return CartVO.builder()
+                    .dishId(shoppingCart.getDishId())
+                    .dishName(shoppingCart.getDishName())
+                    .dishPrice(shoppingCart.getDishPrice())
+                    .quantity(shoppingCart.getQuantity())
+                    .amount(amount)
+                    .dishStatus(0)
+                    .available(false)
+                    .changeMessage("商品已删除，请移出购物车")
+                    .build();
+        }
+
+        boolean available = Integer.valueOf(1).equals(dish.getStatus());
+        BigDecimal amount = dish.getPrice().multiply(BigDecimal.valueOf(shoppingCart.getQuantity()));
+        String changeMessage = null;
+        if (!available) {
+            changeMessage = "商品已下架，请移出购物车";
+        } else if (dish.getPrice().compareTo(shoppingCart.getDishPrice()) != 0) {
+            changeMessage = "价格已更新";
+        } else if (!dish.getName().equals(shoppingCart.getDishName())) {
+            changeMessage = "商品信息已更新";
+        }
         return CartVO.builder()
                 .dishId(shoppingCart.getDishId())
-                .dishName(shoppingCart.getDishName())
-                .dishPrice(shoppingCart.getDishPrice())
+                .dishName(dish.getName())
+                .dishPrice(dish.getPrice())
                 .quantity(shoppingCart.getQuantity())
                 .amount(amount)
+                .dishStatus(dish.getStatus())
+                .available(available)
+                .changeMessage(changeMessage)
                 .build();
     }
 }
