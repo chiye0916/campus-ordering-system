@@ -1,12 +1,14 @@
 CREATE TABLE IF NOT EXISTS user (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(64) NOT NULL,
+    email VARCHAR(128),
     password VARCHAR(255) NOT NULL,
     nickname VARCHAR(64),
     role VARCHAR(32) NOT NULL DEFAULT 'USER',
     create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_user_username (username)
+    UNIQUE KEY uk_user_username (username),
+    UNIQUE KEY uk_user_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS category (

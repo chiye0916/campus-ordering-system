@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Executive Dining</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=20260618-user-metrics">
 </head>
 <body>
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
@@ -28,33 +28,17 @@
       <div>
         <p class="eyebrow">Business Portal</p>
         <h2>欢迎回来</h2>
-        <p class="muted">请选择账号身份或手动输入账号登录。</p>
+        <p class="muted">请输入账号密码登录，也可以从账号助手中快速选择测试账号。</p>
       </div>
 
-      <div class="identity-panel">
-        <div class="identity-head">
-          <strong>账号身份选择</strong>
-          <span id="selectedIdentityText">未选择</span>
-        </div>
-        <div class="identity-grid">
-          <button class="identity-card" type="button" data-action="select-login-account" data-account="user">
-            <span class="identity-avatar">张</span>
-            <strong>张三 / zhangsan</strong>
-            <small>普通用户 · 点餐与订单</small>
-          </button>
-          <button class="identity-card" type="button" data-action="select-login-account" data-account="admin">
-            <span class="identity-avatar admin">管</span>
-            <strong>管理员 / admin</strong>
-            <small>管理员 · 经营后台</small>
-          </button>
-        </div>
-      </div>
-
-      <div id="loginRoleHint" class="role-hint">当前登录身份：请先选择账号或手动输入</div>
+      <div id="loginRoleHint" class="role-hint">当前登录身份：<span id="selectedIdentityText">手动输入账号</span></div>
 
       <label class="field">
-        <span>用户名 / 手机号</span>
-        <input id="usernameInput" type="text" autocomplete="username" placeholder="请输入账号">
+        <span>用户名</span>
+        <div class="input-action">
+          <input id="usernameInput" type="text" autocomplete="username" placeholder="请输入账号">
+          <button class="input-icon-button" type="button" data-action="open-account-picker" aria-label="选择测试账号">账号</button>
+        </div>
       </label>
 
       <label class="field">
@@ -314,6 +298,6 @@
 
   <div id="modalRoot" class="modal-root hidden"></div>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260618-user-metrics"></script>
 </body>
 </html>

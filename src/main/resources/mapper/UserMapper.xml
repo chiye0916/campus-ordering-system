@@ -7,6 +7,7 @@
     <resultMap id="UserResultMap" type="demo3.demo3_068.entity.User">
         <id column="id" property="id"/>
         <result column="username" property="username"/>
+        <result column="email" property="email"/>
         <result column="password" property="password"/>
         <result column="nickname" property="nickname"/>
         <result column="role" property="role"/>
@@ -15,20 +16,26 @@
     </resultMap>
 
     <select id="selectByUsername" resultMap="UserResultMap">
-        select id, username, password, nickname, role, create_time, update_time
+        select id, username, email, password, nickname, role, create_time, update_time
         from `user`
         where username = #{username}
     </select>
 
+    <select id="selectByEmail" resultMap="UserResultMap">
+        select id, username, email, password, nickname, role, create_time, update_time
+        from `user`
+        where email = #{email}
+    </select>
+
     <select id="selectById" resultMap="UserResultMap">
-        select id, username, password, nickname, role, create_time, update_time
+        select id, username, email, password, nickname, role, create_time, update_time
         from `user`
         where id = #{id}
     </select>
 
     <insert id="insert" parameterType="demo3.demo3_068.entity.User"
             useGeneratedKeys="true" keyProperty="id">
-        insert into `user` (username, password, nickname, role)
-        values (#{username}, #{password}, #{nickname}, #{role})
+        insert into `user` (username, email, password, nickname, role)
+        values (#{username}, #{email}, #{password}, #{nickname}, #{role})
     </insert>
 </mapper>

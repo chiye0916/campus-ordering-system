@@ -29,14 +29,40 @@ redis7
 BASE_URL="http://127.0.0.1:8080"
 ```
 
+如果你的数据库是在邮箱验证码功能之前创建的，需要先给 `user` 表补邮箱字段：
+
+```bash
+docker exec -it mysql8 mysql -u chiye -p1234 demo3_db
+```
+
+```sql
+alter table user add column email varchar(128) null after username;
+alter table user add unique key uk_user_email (email);
+exit;
+```
+
 ## 1. 准备普通用户和管理员
 
-注册普通用户，已注册过可跳过：
+发送注册邮箱验证码：
+
+```bash
+curl -X POST "$BASE_URL/user/email/code" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"你的邮箱@qq.com"}'
+```
+
+查看邮箱，复制 6 位验证码：
+
+```bash
+EMAIL_CODE="把邮箱里的验证码粘贴到这里"
+```
+
+注册普通用户，已注册过可跳过。注意：现在注册需要邮箱和验证码：
 
 ```bash
 curl -X POST "$BASE_URL/user/register" \
   -H "Content-Type: application/json" \
-  -d '{"username":"zhangsan","password":"123456","nickname":"aa"}'
+  -d "{\"username\":\"zhangsan\",\"email\":\"你的邮箱@qq.com\",\"password\":\"123456\",\"emailCode\":\"$EMAIL_CODE\",\"nickname\":\"aa\"}"
 ```
 
 登录普通用户：
@@ -53,12 +79,12 @@ curl -X POST "$BASE_URL/user/login" \
 USER_TOKEN="把 zhangsan 登录返回的 token 粘贴到这里"
 ```
 
-注册管理员用户，已注册过可跳过：
+注册管理员用户时同样需要先获取邮箱验证码。Demo 当前不开放前端直接注册管理员，建议先注册为普通用户，再通过数据库授权为管理员：
 
 ```bash
 curl -X POST "$BASE_URL/user/register" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"123456","nickname":"管理员"}'
+  -d "{\"username\":\"admin\",\"email\":\"另一个邮箱@qq.com\",\"password\":\"123456\",\"emailCode\":\"$EMAIL_CODE\",\"nickname\":\"管理员\"}"
 ```
 
 把 `admin` 改成管理员：

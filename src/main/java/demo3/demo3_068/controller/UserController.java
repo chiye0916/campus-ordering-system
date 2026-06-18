@@ -1,6 +1,7 @@
 package demo3.demo3_068.controller;
 
 import demo3.demo3_068.common.Result;
+import demo3.demo3_068.dto.EmailCodeDTO;
 import demo3.demo3_068.dto.UserLoginDTO;
 import demo3.demo3_068.dto.UserRegisterDTO;
 import demo3.demo3_068.service.UserService;
@@ -21,6 +22,12 @@ public class UserController {
 
     public UserController(UserService userService) {
         this.userService = userService;
+    }
+
+    @PostMapping("/email/code")
+    public Result<Void> sendEmailCode(@Valid @RequestBody EmailCodeDTO emailCodeDTO) {
+        userService.sendEmailCode(emailCodeDTO);
+        return Result.success();
     }
 
     @PostMapping("/register")

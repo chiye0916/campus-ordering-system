@@ -14,6 +14,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const money = (value) => `¥${Number(value || 0).toFixed(2)}`;
+const RECENT_LOGIN_ACCOUNTS_KEY = "demo3_recent_login_accounts";
 
 const statusText = {
   1: "待支付",
@@ -28,6 +29,59 @@ const statusClass = {
   3: "button-secondary",
   4: "danger-button"
 };
+
+const loginPresets = {
+  user: {
+    username: "zhangsan",
+    password: "123456",
+    label: "张三 / zhangsan · 普通用户",
+    title: "张三 / zhangsan",
+    detail: "普通用户 · 点餐与订单",
+    avatar: "张",
+    admin: false
+  },
+  admin: {
+    username: "admin",
+    password: "123456",
+    label: "管理员 / admin · 管理员",
+    title: "管理员 / admin",
+    detail: "管理员 · 经营后台",
+    avatar: "管",
+    admin: true
+  }
+};
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getRecentLoginAccounts() {
+  try {
+    const accounts = JSON.parse(localStorage.getItem(RECENT_LOGIN_ACCOUNTS_KEY) || "[]");
+    return Array.isArray(accounts) ? accounts : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function rememberLoginAccount(user) {
+  if (!user?.username) return;
+  const account = {
+    username: user.username,
+    nickname: user.nickname || user.username,
+    role: user.role || "USER",
+    lastLoginAt: Date.now()
+  };
+  const accounts = getRecentLoginAccounts()
+    .filter((item) => item.username !== account.username);
+  accounts.unshift(account);
+  localStorage.setItem(RECENT_LOGIN_ACCOUNTS_KEY, JSON.stringify(accounts.slice(0, 8)));
+}
 
 function showToast(message, type = "info") {
   const toast = document.createElement("div");
@@ -104,6 +158,7 @@ function setSession(loginVO) {
     nickname: loginVO.nickname,
     role: loginVO.role
   };
+  rememberLoginAccount(state.user);
 
   if ($("#rememberInput").checked) {
     localStorage.setItem("demo3_token", state.token);
@@ -212,6 +267,17 @@ function openModal({ title, body, confirmText = "确认", cancelText = "取消",
   });
 }
 
+function closeActiveModal() {
+  const root = $("#modalRoot");
+  const cancelButton = root.querySelector("[data-modal-cancel]");
+  if (cancelButton) {
+    cancelButton.click();
+    return;
+  }
+  root.classList.add("hidden");
+  root.innerHTML = "";
+}
+
 function confirmDialog(message, options = {}) {
   return openModal({
     title: options.title || "请确认",
@@ -221,35 +287,92 @@ function confirmDialog(message, options = {}) {
   });
 }
 
-function selectLoginAccount(account) {
-  const presets = {
-    user: {
-      username: "zhangsan",
-      password: "123456",
-      label: "张三 / zhangsan · 普通用户"
-    },
-    admin: {
-      username: "admin",
-      password: "123456",
-      label: "管理员 / admin · 管理员"
-    }
-  };
-  const selected = presets[account];
+function selectLoginAccount(account, source = "preset") {
+  let selected;
+  if (source === "recent") {
+    const recent = getRecentLoginAccounts().find((item) => item.username === account);
+    if (!recent) return;
+    selected = {
+      username: recent.username,
+      password: "",
+      label: `${recent.nickname || recent.username} / ${recent.username} · ${recent.role === "ADMIN" ? "管理员" : "普通用户"}`
+    };
+    showToast("已填入最近登录账号，请输入密码", "success");
+  } else {
+    selected = loginPresets[account];
+  }
   if (!selected) return;
-  state.selectedLoginAccount = account;
+  state.selectedLoginAccount = source === "recent" ? `recent:${selected.username}` : account;
   $("#usernameInput").value = selected.username;
   $("#passwordInput").value = selected.password;
   $("#selectedIdentityText").textContent = selected.label;
-  $("#loginRoleHint").textContent = `当前登录身份：${selected.label}`;
-  $$(".identity-card").forEach((card) => {
-    card.classList.toggle("active", card.dataset.account === account);
+  closeActiveModal();
+}
+
+async function openLoginAccountPicker() {
+  const presetCards = Object.entries(loginPresets).map(([key, account]) => `
+    <button class="identity-card ${state.selectedLoginAccount === key ? "active" : ""}" type="button" data-action="select-login-account" data-account-source="preset" data-account="${key}">
+      <span class="identity-avatar ${account.admin ? "admin" : ""}">${escapeHtml(account.avatar)}</span>
+      <span>
+        <strong>${escapeHtml(account.title)}</strong>
+        <small>${escapeHtml(account.detail)}</small>
+      </span>
+    </button>
+  `).join("");
+  const presetUsernames = new Set(Object.values(loginPresets).map((account) => account.username));
+  const recentAccounts = getRecentLoginAccounts()
+    .filter((account) => !presetUsernames.has(account.username));
+  const recentCards = recentAccounts.map((account) => {
+    const name = account.nickname || account.username;
+    const roleText = account.role === "ADMIN" ? "管理员" : "普通用户";
+    return `
+      <button class="identity-card ${state.selectedLoginAccount === `recent:${account.username}` ? "active" : ""}" type="button" data-action="select-login-account" data-account-source="recent" data-account="${escapeHtml(account.username)}">
+        <span class="identity-avatar ${account.role === "ADMIN" ? "admin" : ""}">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>
+        <span>
+          <strong>${escapeHtml(name)} / ${escapeHtml(account.username)}</strong>
+          <small>${roleText} · 本机最近登录 · 需输入密码</small>
+        </span>
+      </button>
+    `;
+  }).join("");
+
+  await openModal({
+    title: "选择登录账号",
+    body: `
+      <p class="muted">你仍然可以关闭弹窗，手动输入任意已注册账号登录。最近登录账号不会保存密码。</p>
+      <div class="account-picker-section">
+        <strong>Demo 快捷账号</strong>
+        <div class="identity-grid account-picker">${presetCards}</div>
+      </div>
+      <div class="account-picker-section">
+        <strong>本机最近登录</strong>
+        ${recentCards ? `<div class="identity-grid account-picker">${recentCards}</div>` : `<div class="empty-state compact">暂无最近登录账号</div>`}
+      </div>
+    `,
+    confirmText: "关闭"
   });
 }
 
 function isValidContact(value) {
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const phonePattern = /^1[3-9]\d{9}$/;
-  return emailPattern.test(value) || phonePattern.test(value);
+  return emailPattern.test(value);
+}
+
+function startEmailCodeCountdown(button, seconds = 60) {
+  let remaining = seconds;
+  button.disabled = true;
+  button.textContent = `${remaining}秒后重试`;
+
+  const timer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(timer);
+      button.disabled = false;
+      button.textContent = "获取验证码";
+      return;
+    }
+    button.textContent = `${remaining}秒后重试`;
+  }, 1000);
 }
 
 async function openRegisterModal() {
@@ -262,8 +385,8 @@ async function openRegisterModal() {
           <input id="registerUsername" type="text" placeholder="3-64 位用户名">
         </label>
         <label class="field">
-          <span>手机号 / 邮箱</span>
-          <input id="registerContact" type="text" placeholder="手机号或邮箱">
+          <span>邮箱</span>
+          <input id="registerEmail" type="email" placeholder="请输入邮箱">
         </label>
         <label class="field">
           <span>密码</span>
@@ -274,6 +397,13 @@ async function openRegisterModal() {
           <input id="registerConfirmPassword" type="password" placeholder="再次输入密码">
         </label>
         <label class="field wide">
+          <span>邮箱验证码</span>
+          <div class="inline-control">
+            <input id="registerEmailCode" type="text" maxlength="6" placeholder="6 位验证码">
+            <button class="button button-secondary" type="button" data-action="send-register-code">获取验证码</button>
+          </div>
+        </label>
+        <label class="field wide">
           <span>用户类型</span>
           <select id="registerRole">
             <option value="USER">普通用户</option>
@@ -281,22 +411,23 @@ async function openRegisterModal() {
           </select>
         </label>
       </div>
-      <p class="muted">当前后端注册接口保存用户名、密码和昵称；手机号/邮箱仅做前端校验演示。</p>
+      <p class="muted">验证码会发送到你的邮箱，5 分钟内有效。</p>
     `,
     confirmText: "注册",
     onConfirm: async () => {
       const username = $("#registerUsername").value.trim();
-      const contact = $("#registerContact").value.trim();
+      const email = $("#registerEmail").value.trim();
       const password = $("#registerPassword").value;
       const confirmPassword = $("#registerConfirmPassword").value;
+      const emailCode = $("#registerEmailCode").value.trim();
       const role = $("#registerRole").value;
 
-      if (!username || !contact || !password || !confirmPassword) {
+      if (!username || !email || !password || !confirmPassword || !emailCode) {
         showToast("注册信息不能为空", "error");
         return false;
       }
-      if (!isValidContact(contact)) {
-        showToast("手机号或邮箱格式错误", "error");
+      if (!isValidContact(email)) {
+        showToast("邮箱格式错误", "error");
         return false;
       }
       if (password !== confirmPassword) {
@@ -313,7 +444,9 @@ async function openRegisterModal() {
           method: "POST",
           body: {
             username,
+            email,
             password,
+            emailCode,
             nickname: username
           }
         });
@@ -321,8 +454,6 @@ async function openRegisterModal() {
         $("#passwordInput").value = "";
         state.selectedLoginAccount = null;
         $("#selectedIdentityText").textContent = "手动注册账号";
-        $("#loginRoleHint").textContent = `当前登录身份：${username} · 普通用户`;
-        $$(".identity-card").forEach((card) => card.classList.remove("active"));
         showToast("注册成功，请登录", "success");
       } catch (error) {
         showToast(error.message || "注册失败", "error");
@@ -336,32 +467,56 @@ function productInitial(name) {
   return (name || "餐").slice(0, 1);
 }
 
+function getMemberLevel(growth) {
+  const levels = [
+    { name: "普通会员", min: 0, next: 500 },
+    { name: "银卡会员", min: 500, next: 1500 },
+    { name: "金卡会员", min: 1500, next: 3000 },
+    { name: "企业尊享会员", min: 3000, next: null }
+  ];
+  return levels.slice().reverse().find((level) => growth >= level.min) || levels[0];
+}
+
 function renderHomeMetrics() {
   const total = state.orders.length;
-  const pending = state.orders.filter((order) => order.status === 1 || order.status === 2).length;
+  const unpaid = state.orders.filter((order) => order.status === 1).length;
   const cartCount = state.cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-  const growth = 1280 + total * 80 + cartCount * 10;
-  const nextLevelGap = Math.max(0, 1800 - growth);
+  const paidAmount = state.orders
+    .filter((order) => order.status === 2 || order.status === 3)
+    .reduce((sum, order) => sum + Number(order.amount || 0), 0);
+  const growth = Math.floor(paidAmount);
+  const memberLevel = getMemberLevel(growth);
+  const nextLevelGap = memberLevel.next === null ? 0 : Math.max(0, memberLevel.next - growth);
+  const progressBase = memberLevel.next || growth || 1;
+  const progress = memberLevel.next === null ? 100 : Math.min(100, Math.round((growth / progressBase) * 100));
+  const levelText = memberLevel.next === null
+    ? "已达到当前最高等级"
+    : `距离下一等级还差 ${nextLevelGap} 成长值`;
 
   $("#userGrowthSummary").innerHTML = `
     <section class="growth-card">
       <p class="eyebrow">Membership</p>
-      <h2>企业尊享会员</h2>
-      <p class="muted">成长值 ${growth}，距离黑金会员还差 ${nextLevelGap} 成长值。</p>
-      <div class="progress-track"><span style="width:${Math.min(100, Math.round((growth / 1800) * 100))}%"></span></div>
+      <h2>${memberLevel.name}</h2>
+      <p class="muted">成长值 ${growth}，${levelText}。</p>
+      <div class="progress-track"><span style="width:${progress}%"></span></div>
     </section>
     <section class="metric-grid">
-      ${[
-        ["我的订单", total],
-        ["待处理订单", pending],
-        ["成长值", growth],
-        ["购物车餐品", cartCount]
-      ].map(([label, value]) => `
-        <article class="metric-card">
-          <span>${label}</span>
-          <strong>${value}</strong>
-        </article>
-      `).join("")}
+      <button class="metric-card metric-action" type="button" data-user-view-link="userOrdersView">
+        <span>我的订单</span>
+        <strong>${total}</strong>
+      </button>
+      <button class="metric-card metric-action" type="button" data-user-view-link="userOrdersView">
+        <span>待支付订单</span>
+        <strong>${unpaid}</strong>
+      </button>
+      <article class="metric-card">
+        <span>成长值</span>
+        <strong>${growth}</strong>
+      </article>
+      <button class="metric-card metric-action" type="button" data-user-view-link="userMenuView">
+        <span>购物车餐品</span>
+        <strong>${cartCount}</strong>
+      </button>
     </section>
     <section class="benefit-grid">
       ${["优先配送", "会议餐定制", "专属客服", "企业月结"].map((item) => `
@@ -378,7 +533,7 @@ function renderHomeMetrics() {
     <div class="detail-row"><span>用户名</span><strong>${state.user?.username || "-"}</strong></div>
     <div class="detail-row"><span>昵称</span><strong>${state.user?.nickname || "-"}</strong></div>
     <div class="detail-row"><span>账号类型</span><strong>普通用户</strong></div>
-    <div class="detail-row"><span>会员等级</span><strong>企业尊享会员</strong></div>
+    <div class="detail-row"><span>会员等级</span><strong>${memberLevel.name}</strong></div>
   `;
 }
 
@@ -665,6 +820,9 @@ async function refreshAdmin() {
 }
 
 async function startApp() {
+  if (state.user?.username) {
+    rememberLoginAccount(state.user);
+  }
   renderSession();
   if (!state.token) return;
   try {
@@ -909,8 +1067,6 @@ function bindEvents() {
   $("#usernameInput").addEventListener("input", () => {
     state.selectedLoginAccount = null;
     $("#selectedIdentityText").textContent = "手动输入账号";
-    $("#loginRoleHint").textContent = "当前登录身份：手动输入账号";
-    $$(".identity-card").forEach((card) => card.classList.remove("active"));
   });
 
   $$('[data-action="logout"]').forEach((button) => {
@@ -1023,12 +1179,43 @@ function bindEvents() {
     const id = Number(target.dataset.id);
 
     try {
+      if (action === "open-account-picker") {
+        await openLoginAccountPicker();
+      }
+
       if (action === "select-login-account") {
-        selectLoginAccount(target.dataset.account);
+        selectLoginAccount(target.dataset.account, target.dataset.accountSource || "preset");
       }
 
       if (action === "open-register") {
         await openRegisterModal();
+      }
+
+      if (action === "send-register-code") {
+        const emailInput = $("#registerEmail");
+        const email = emailInput ? emailInput.value.trim() : "";
+        if (!email) {
+          showToast("请输入邮箱", "error");
+          return;
+        }
+        if (!isValidContact(email)) {
+          showToast("邮箱格式错误", "error");
+          return;
+        }
+        target.disabled = true;
+        target.textContent = "发送中...";
+        try {
+          await api("/user/email/code", {
+            method: "POST",
+            body: { email }
+          });
+          showToast("验证码已发送，请查看邮箱", "success");
+          startEmailCodeCountdown(target);
+        } catch (error) {
+          target.disabled = false;
+          target.textContent = "获取验证码";
+          throw error;
+        }
       }
 
       if (action === "forgot-password") {
