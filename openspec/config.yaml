@@ -1,20 +1,51 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Project: 简化版校园点餐系统。
+  Goal: 学习 Java/Spring Boot 后端业务开发，核心闭环是用户浏览商品、加入购物车、提交订单、查询订单、修改订单状态。
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Tech stack:
+  - Java 17
+  - Spring Boot 3.5.14
+  - Spring MVC
+  - MyBatis XML, do not use MyBatis-Plus
+  - MySQL
+  - Redis
+  - JWT + HandlerInterceptor, do not introduce full Spring Security unless explicitly requested
+  - Lombok
+  - Validation
+  - Maven Wrapper
+
+  Current state:
+  - User register/login/logout/current-user APIs are implemented.
+  - JWT utility, Redis login state, JWT interceptor, and BaseContext are implemented.
+  - Category CRUD is implemented.
+  - Dish CRUD, pagination, category list, status update, and Redis cache invalidation are implemented.
+  - Cart APIs are implemented.
+  - Order submit/detail/page/cancel/complete/pay APIs are implemented.
+  - docs/API_TEST.md contains API regression test steps.
+  - Next likely work: complete full API regression test, then consider frontend pages or admin/user role separation.
+
+  Architecture conventions:
+  - Controller must not call Mapper directly.
+  - Service owns business logic, transactions, cache invalidation, and status transitions.
+  - DTO receives request data, VO returns response data, Entity maps database tables.
+  - All APIs return Result<T>.
+  - Business errors use BusinessException and GlobalExceptionHandler.
+  - Current user ID must come from JWT/BaseContext, never from frontend userId.
+  - Request cleanup must remove ThreadLocal to avoid user leakage.
+  - Order submit must use @Transactional.
+  - Monetary calculation must use BigDecimal, never double.
+  - SQL should continue using MyBatis XML.
+  - Implement features in small steps and verify existing behavior.
+
+rules:
+  proposal:
+    - Keep proposals focused on one change.
+    - Include what is in scope and what is out of scope.
+  design:
+    - Explain request flow from Controller to Service to Mapper/XML to database.
+    - Mention transaction, cache, authentication, and validation impact when relevant.
+  tasks:
+    - Break implementation into small, testable steps.
+    - Include verification steps using Maven tests or HTTP/API regression checks.
