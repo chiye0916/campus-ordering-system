@@ -8,14 +8,17 @@ import demo3.demo3_068.dto.OrderSubmitDTO;
 import demo3.demo3_068.entity.Dish;
 import demo3.demo3_068.entity.OrderDetail;
 import demo3.demo3_068.entity.Orders;
+import demo3.demo3_068.entity.PaymentRecord;
 import demo3.demo3_068.entity.ShoppingCart;
 import demo3.demo3_068.mapper.DishMapper;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.OrderDetailMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
+import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.utils.OrderNumberUtil;
+import demo3.demo3_068.utils.PaymentTradeNoUtil;
 import demo3.demo3_068.vo.OrderDetailVO;
 import demo3.demo3_068.vo.OrderItemVO;
 import demo3.demo3_068.vo.OrderPayVO;
@@ -34,20 +37,26 @@ public class OrderServiceImpl implements OrderService {
     private static final int STATUS_PAID = 2;
     private static final int STATUS_COMPLETED = 3;
     private static final int STATUS_CANCELLED = 4;
+    private static final int PAYMENT_STATUS_PAYING = 1;
+    private static final int PAYMENT_STATUS_SUCCESS = 2;
+    private static final String PAYMENT_CHANNEL_MOCK = "MOCK";
 
     private final OrdersMapper ordersMapper;
     private final OrderDetailMapper orderDetailMapper;
     private final ShoppingCartMapper shoppingCartMapper;
     private final DishMapper dishMapper;
+    private final PaymentRecordMapper paymentRecordMapper;
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
                             OrderDetailMapper orderDetailMapper,
                             ShoppingCartMapper shoppingCartMapper,
-                            DishMapper dishMapper) {
+                            DishMapper dishMapper,
+                            PaymentRecordMapper paymentRecordMapper) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.shoppingCartMapper = shoppingCartMapper;
         this.dishMapper = dishMapper;
+        this.paymentRecordMapper = paymentRecordMapper;
     }
 
     @Override
@@ -104,6 +113,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional
     public OrderPayVO pay(Long id) {
         Orders orders = getOwnOrderOrThrow(id);
         if (orders.getStatus() != STATUS_PENDING_PAYMENT) {
@@ -111,9 +121,18 @@ public class OrderServiceImpl implements OrderService {
         }
 
         LocalDateTime payTime = LocalDateTime.now();
+        PaymentRecord paymentRecord = buildMockPaymentRecord(orders, payTime);
+        paymentRecordMapper.insert(paymentRecord);
+
         int rows = ordersMapper.updateToPaidById(id, payTime, STATUS_PENDING_PAYMENT, STATUS_PAID);
         if (rows == 0) {
             throw new BusinessException("订单状态已变化，请刷新后重试");
+        }
+
+        int paymentRows = paymentRecordMapper.updateStatusToSuccessById(
+                paymentRecord.getId(), payTime, PAYMENT_STATUS_PAYING, PAYMENT_STATUS_SUCCESS);
+        if (paymentRows == 0) {
+            throw new BusinessException("支付流水状态已变化，请刷新后重试");
         }
 
         return OrderPayVO.builder()
@@ -195,6 +214,21 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(401, "未登录");
         }
         return userId;
+    }
+
+    private PaymentRecord buildMockPaymentRecord(Orders orders, LocalDateTime requestTime) {
+        PaymentRecord paymentRecord = new PaymentRecord();
+        paymentRecord.setOrderId(orders.getId());
+        paymentRecord.setOrderNumber(orders.getNumber());
+        paymentRecord.setUserId(orders.getUserId());
+        paymentRecord.setAmount(orders.getAmount());
+        paymentRecord.setPayChannel(PAYMENT_CHANNEL_MOCK);
+        paymentRecord.setTradeNo(PaymentTradeNoUtil.generateTradeNo());
+        paymentRecord.setStatus(PAYMENT_STATUS_PAYING);
+        paymentRecord.setRequestTime(requestTime);
+        paymentRecord.setCreateTime(requestTime);
+        paymentRecord.setUpdateTime(requestTime);
+        return paymentRecord;
     }
 
     private List<ShoppingCart> refreshCartItems(List<ShoppingCart> cartItems) {

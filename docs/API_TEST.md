@@ -401,6 +401,29 @@ curl -X PUT "$BASE_URL/order/$ORDER_ID/pay" \
 }
 ```
 
+查看支付流水，应该存在一条 `MOCK` 支付成功记录：
+
+```bash
+docker exec -it mysql8 mysql -u chiye -p1234 demo3_db
+```
+
+```sql
+select id, order_id, order_number, user_id, amount, pay_channel, trade_no, status, request_time, success_time
+from payment_record
+where order_id = 你的订单ID
+order by id desc;
+exit;
+```
+
+期望结果：
+
+```text
+pay_channel=MOCK
+status=2
+trade_no 以 PAY 开头且不为空
+success_time 不为空
+```
+
 管理员完成订单：
 
 ```bash

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.PaymentRecordMapper">
+
+    <resultMap id="PaymentRecordResultMap" type="demo3.demo3_068.entity.PaymentRecord">
+        <id column="id" property="id"/>
+        <result column="order_id" property="orderId"/>
+        <result column="order_number" property="orderNumber"/>
+        <result column="user_id" property="userId"/>
+        <result column="amount" property="amount"/>
+        <result column="pay_channel" property="payChannel"/>
+        <result column="trade_no" property="tradeNo"/>
+        <result column="third_trade_no" property="thirdTradeNo"/>
+        <result column="status" property="status"/>
+        <result column="request_time" property="requestTime"/>
+        <result column="success_time" property="successTime"/>
+        <result column="callback_time" property="callbackTime"/>
+        <result column="failure_reason" property="failureReason"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.PaymentRecord"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into payment_record (
+            order_id, order_number, user_id, amount, pay_channel, trade_no,
+            third_trade_no, status, request_time, success_time, callback_time,
+            failure_reason, create_time, update_time
+        )
+        values (
+            #{orderId}, #{orderNumber}, #{userId}, #{amount}, #{payChannel}, #{tradeNo},
+            #{thirdTradeNo}, #{status}, #{requestTime}, #{successTime}, #{callbackTime},
+            #{failureReason}, #{createTime}, #{updateTime}
+        )
+    </insert>
+
+    <update id="updateStatusToSuccessById">
+        update payment_record
+        set status = #{newStatus},
+            success_time = #{successTime},
+            update_time = #{successTime}
+        where id = #{id}
+          and status = #{oldStatus}
+    </update>
+</mapper>

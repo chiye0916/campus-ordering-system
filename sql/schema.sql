@@ -73,3 +73,25 @@ CREATE TABLE IF NOT EXISTS order_detail (
     amount DECIMAL(10, 2) NOT NULL,
     KEY idx_order_detail_order_id (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS payment_record (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    order_id BIGINT NOT NULL,
+    order_number VARCHAR(64) NOT NULL,
+    user_id BIGINT NOT NULL,
+    amount DECIMAL(10, 2) NOT NULL,
+    pay_channel VARCHAR(32) NOT NULL,
+    trade_no VARCHAR(64) NOT NULL,
+    third_trade_no VARCHAR(128),
+    status TINYINT NOT NULL COMMENT '1:支付中, 2:支付成功, 3:支付失败, 4:已关闭',
+    request_time DATETIME NOT NULL,
+    success_time DATETIME,
+    callback_time DATETIME,
+    failure_reason VARCHAR(255),
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_payment_trade_no (trade_no),
+    KEY idx_payment_order_id (order_id),
+    KEY idx_payment_user_id (user_id),
+    KEY idx_payment_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
