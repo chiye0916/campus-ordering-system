@@ -424,6 +424,20 @@ trade_no 以 PAY 开头且不为空
 success_time 不为空
 ```
 
+已支付订单不能直接取消，后续应走退款流程：
+
+```bash
+curl -X PUT "$BASE_URL/order/$ORDER_ID/cancel" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+期望结果：
+
+```text
+code=409
+message=已支付订单不能直接取消，请走退款流程
+```
+
 管理员完成订单：
 
 ```bash
@@ -466,6 +480,82 @@ curl -X PUT "$BASE_URL/order/$ORDER_ID/pay" \
 ```text
 code=409
 message=只有待支付订单才能支付
+```
+
+Redis 订单状态锁验证：同一个订单的并发状态流转只能有一个请求进入业务逻辑。先重新创建一个待支付订单，得到新的 `LOCK_ORDER_ID`：
+
+```bash
+curl -X DELETE "$BASE_URL/cart/clean" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+curl -X POST "$BASE_URL/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
+
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d '{"remark":"Redis锁并发测试"}'
+```
+
+复制返回的 `data`：
+
+```bash
+LOCK_ORDER_ID="把新订单 ID 粘贴到这里"
+```
+
+快速重复支付同一个订单：
+
+```bash
+curl -X PUT "$BASE_URL/order/$LOCK_ORDER_ID/pay" \
+  -H "Authorization: Bearer $USER_TOKEN" &
+curl -X PUT "$BASE_URL/order/$LOCK_ORDER_ID/pay" \
+  -H "Authorization: Bearer $USER_TOKEN" &
+wait
+```
+
+期望结果：
+
+```text
+最多一个请求返回 code=200
+其他请求返回 code=409，message 可能是“订单处理中，请稍后重试”或“只有待支付订单才能支付”
+payment_record 中该订单最多只有一条 status=2 的 MOCK 支付成功记录
+```
+
+查看支付流水：
+
+```sql
+select order_id, pay_channel, status, count(*) as count
+from payment_record
+where order_id = 你的 LOCK_ORDER_ID
+group by order_id, pay_channel, status;
+```
+
+检查 Redis 锁 key 已释放：
+
+```bash
+docker exec -it redis7 redis-cli exists "lock:order:status:$LOCK_ORDER_ID"
+```
+
+期望结果：
+
+```text
+0
+```
+
+已支付订单不能直接取消：
+
+```bash
+curl -X PUT "$BASE_URL/order/$LOCK_ORDER_ID/cancel" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+期望结果：
+
+```text
+code=409
+message=已支付订单不能直接取消，请走退款流程
 ```
 
 普通用户不能完成订单：
@@ -710,5 +800,6 @@ order by id;
 ```text
 待支付 -> 已支付 -> 已完成
 待支付 -> 已取消
-已支付 -> 已取消
 ```
+
+说明：已支付订单不能直接取消，后续如果需要取消已支付订单，应单独设计退款流程。

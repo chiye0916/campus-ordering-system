@@ -3,6 +3,7 @@ package demo3.demo3_068.service.impl;
 import demo3.demo3_068.common.BaseContext;
 import demo3.demo3_068.common.Constants;
 import demo3.demo3_068.common.PageResult;
+import demo3.demo3_068.common.RedisDistributedLock;
 import demo3.demo3_068.dto.OrderPageQueryDTO;
 import demo3.demo3_068.dto.OrderSubmitDTO;
 import demo3.demo3_068.entity.Dish;
@@ -24,11 +25,16 @@ import demo3.demo3_068.vo.OrderItemVO;
 import demo3.demo3_068.vo.OrderPayVO;
 import demo3.demo3_068.vo.OrderVO;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
+import java.util.function.Supplier;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -40,23 +46,27 @@ public class OrderServiceImpl implements OrderService {
     private static final int PAYMENT_STATUS_PAYING = 1;
     private static final int PAYMENT_STATUS_SUCCESS = 2;
     private static final String PAYMENT_CHANNEL_MOCK = "MOCK";
+    private static final Duration ORDER_STATUS_LOCK_TTL = Duration.ofSeconds(30);
 
     private final OrdersMapper ordersMapper;
     private final OrderDetailMapper orderDetailMapper;
     private final ShoppingCartMapper shoppingCartMapper;
     private final DishMapper dishMapper;
     private final PaymentRecordMapper paymentRecordMapper;
+    private final RedisDistributedLock redisDistributedLock;
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
                             OrderDetailMapper orderDetailMapper,
                             ShoppingCartMapper shoppingCartMapper,
                             DishMapper dishMapper,
-                            PaymentRecordMapper paymentRecordMapper) {
+                            PaymentRecordMapper paymentRecordMapper,
+                            RedisDistributedLock redisDistributedLock) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.shoppingCartMapper = shoppingCartMapper;
         this.dishMapper = dishMapper;
         this.paymentRecordMapper = paymentRecordMapper;
+        this.redisDistributedLock = redisDistributedLock;
     }
 
     @Override
@@ -115,59 +125,77 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public OrderPayVO pay(Long id) {
-        Orders orders = getOwnOrderOrThrow(id);
-        if (orders.getStatus() != STATUS_PENDING_PAYMENT) {
-            throw new BusinessException("只有待支付订单才能支付");
-        }
+        return executeWithOrderStatusLock(id, () -> {
+            Orders orders = getOwnOrderOrThrow(id);
+            if (orders.getStatus() != STATUS_PENDING_PAYMENT) {
+                throw new BusinessException("只有待支付订单才能支付");
+            }
 
-        LocalDateTime payTime = LocalDateTime.now();
-        PaymentRecord paymentRecord = buildMockPaymentRecord(orders, payTime);
-        paymentRecordMapper.insert(paymentRecord);
+            LocalDateTime payTime = LocalDateTime.now();
+            PaymentRecord paymentRecord = buildMockPaymentRecord(orders, payTime);
+            paymentRecordMapper.insert(paymentRecord);
 
-        int rows = ordersMapper.updateToPaidById(id, payTime, STATUS_PENDING_PAYMENT, STATUS_PAID);
-        if (rows == 0) {
-            throw new BusinessException("订单状态已变化，请刷新后重试");
-        }
+            int rows = ordersMapper.updateToPaidById(id, payTime, STATUS_PENDING_PAYMENT, STATUS_PAID);
+            if (rows == 0) {
+                throw new BusinessException("订单状态已变化，请刷新后重试");
+            }
 
-        int paymentRows = paymentRecordMapper.updateStatusToSuccessById(
-                paymentRecord.getId(), payTime, PAYMENT_STATUS_PAYING, PAYMENT_STATUS_SUCCESS);
-        if (paymentRows == 0) {
-            throw new BusinessException("支付流水状态已变化，请刷新后重试");
-        }
+            int paymentRows = paymentRecordMapper.updateStatusToSuccessById(
+                    paymentRecord.getId(), payTime, PAYMENT_STATUS_PAYING, PAYMENT_STATUS_SUCCESS);
+            if (paymentRows == 0) {
+                throw new BusinessException("支付流水状态已变化，请刷新后重试");
+            }
 
-        return OrderPayVO.builder()
-                .orderId(orders.getId())
-                .orderNumber(orders.getNumber())
-                .status(STATUS_PAID)
-                .amount(orders.getAmount())
-                .payTime(payTime)
-                .build();
+            return OrderPayVO.builder()
+                    .orderId(orders.getId())
+                    .orderNumber(orders.getNumber())
+                    .status(STATUS_PAID)
+                    .amount(orders.getAmount())
+                    .payTime(payTime)
+                    .build();
+        });
     }
 
     @Override
+    @Transactional
     public void cancel(Long id) {
-        Orders orders = getOwnOrderOrThrow(id);
-        if (orders.getStatus() == STATUS_COMPLETED) {
-            throw new BusinessException("已完成订单不能取消");
-        }
-        if (orders.getStatus() == STATUS_CANCELLED) {
-            throw new BusinessException("订单已取消，不能重复取消");
-        }
+        executeWithOrderStatusLock(id, () -> {
+            Orders orders = getOwnOrderOrThrow(id);
+            if (orders.getStatus() == STATUS_PAID) {
+                throw new BusinessException("已支付订单不能直接取消，请走退款流程");
+            }
+            if (orders.getStatus() == STATUS_COMPLETED) {
+                throw new BusinessException("已完成订单不能取消");
+            }
+            if (orders.getStatus() == STATUS_CANCELLED) {
+                throw new BusinessException("订单已取消，不能重复取消");
+            }
+            if (orders.getStatus() != STATUS_PENDING_PAYMENT) {
+                throw new BusinessException("只有待支付订单才能取消");
+            }
 
-        ordersMapper.updateToCancelledById(id, LocalDateTime.now(), STATUS_CANCELLED);
+            int rows = ordersMapper.updateToCancelledById(
+                    id, LocalDateTime.now(), STATUS_PENDING_PAYMENT, STATUS_CANCELLED);
+            if (rows == 0) {
+                throw new BusinessException("订单状态已变化，请刷新后重试");
+            }
+        });
     }
 
     @Override
+    @Transactional
     public void complete(Long id) {
-        Orders orders = getOrderOrThrow(id);
-        if (orders.getStatus() != STATUS_PAID) {
-            throw new BusinessException("只有已支付订单才能完成");
-        }
+        executeWithOrderStatusLock(id, () -> {
+            Orders orders = getOrderOrThrow(id);
+            if (orders.getStatus() != STATUS_PAID) {
+                throw new BusinessException("只有已支付订单才能完成");
+            }
 
-        int rows = ordersMapper.updateToCompletedById(id, LocalDateTime.now(), STATUS_PAID, STATUS_COMPLETED);
-        if (rows == 0) {
-            throw new BusinessException("订单状态已变化，请刷新后重试");
-        }
+            int rows = ordersMapper.updateToCompletedById(id, LocalDateTime.now(), STATUS_PAID, STATUS_COMPLETED);
+            if (rows == 0) {
+                throw new BusinessException("订单状态已变化，请刷新后重试");
+            }
+        });
     }
 
     private Orders getOwnOrderOrThrow(Long id) {
@@ -214,6 +242,42 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(401, "未登录");
         }
         return userId;
+    }
+
+    private <T> T executeWithOrderStatusLock(Long orderId, Supplier<T> action) {
+        String lockKey = Constants.ORDER_STATUS_LOCK_KEY_PREFIX + orderId;
+        String lockValue = UUID.randomUUID().toString();
+        boolean locked = redisDistributedLock.tryLock(lockKey, lockValue, ORDER_STATUS_LOCK_TTL);
+        if (!locked) {
+            throw new BusinessException(Constants.ORDER_STATUS_LOCK_FAILED_MESSAGE);
+        }
+
+        try {
+            return action.get();
+        } finally {
+            releaseOrderStatusLock(lockKey, lockValue);
+        }
+    }
+
+    private void executeWithOrderStatusLock(Long orderId, Runnable action) {
+        executeWithOrderStatusLock(orderId, () -> {
+            action.run();
+            return null;
+        });
+    }
+
+    private void releaseOrderStatusLock(String lockKey, String lockValue) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            redisDistributedLock.unlock(lockKey, lockValue);
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                redisDistributedLock.unlock(lockKey, lockValue);
+            }
+        });
     }
 
     private PaymentRecord buildMockPaymentRecord(Orders orders, LocalDateTime requestTime) {

@@ -70,6 +70,7 @@
         set status = #{newStatus},
             cancel_time = #{cancelTime}
         where id = #{id}
+          and status = #{oldStatus}
     </update>
 
     <update id="updateToCompletedById">

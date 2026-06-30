@@ -27,6 +27,7 @@ public interface OrdersMapper {
 
     int updateToCancelledById(@Param("id") Long id,
                               @Param("cancelTime") LocalDateTime cancelTime,
+                              @Param("oldStatus") Integer oldStatus,
                               @Param("newStatus") Integer newStatus);
 
     int updateToCompletedById(@Param("id") Long id,
