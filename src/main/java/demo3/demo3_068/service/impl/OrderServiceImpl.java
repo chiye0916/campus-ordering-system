@@ -3,6 +3,7 @@ package demo3.demo3_068.service.impl;
 import demo3.demo3_068.common.BaseContext;
 import demo3.demo3_068.common.Constants;
 import demo3.demo3_068.common.PageResult;
+import demo3.demo3_068.common.PermissionChecker;
 import demo3.demo3_068.common.RedisDistributedLock;
 import demo3.demo3_068.dto.OrderPageQueryDTO;
 import demo3.demo3_068.dto.OrderSubmitDTO;
@@ -17,6 +18,7 @@ import demo3.demo3_068.mapper.OrderDetailMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
+import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.utils.OrderNumberUtil;
 import demo3.demo3_068.utils.PaymentTradeNoUtil;
@@ -34,15 +36,13 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 @Service
 public class OrderServiceImpl implements OrderService {
 
-    private static final int STATUS_PENDING_PAYMENT = 1;
-    private static final int STATUS_PAID = 2;
-    private static final int STATUS_COMPLETED = 3;
-    private static final int STATUS_CANCELLED = 4;
     private static final int PAYMENT_STATUS_PAYING = 1;
     private static final int PAYMENT_STATUS_SUCCESS = 2;
     private static final String PAYMENT_CHANNEL_MOCK = "MOCK";
@@ -86,7 +86,7 @@ public class OrderServiceImpl implements OrderService {
         Orders orders = new Orders();
         orders.setNumber(OrderNumberUtil.generateOrderNumber());
         orders.setUserId(userId);
-        orders.setStatus(STATUS_PENDING_PAYMENT);
+        orders.setStatus(OrderStatus.PENDING_PAYMENT.getCode());
         orders.setAmount(totalAmount);
         orders.setRemark(orderSubmitDTO.getRemark());
         orders.setOrderTime(LocalDateTime.now());
@@ -127,15 +127,13 @@ public class OrderServiceImpl implements OrderService {
     public OrderPayVO pay(Long id) {
         return executeWithOrderStatusLock(id, () -> {
             Orders orders = getOwnOrderOrThrow(id);
-            if (orders.getStatus() != STATUS_PENDING_PAYMENT) {
-                throw new BusinessException("只有待支付订单才能支付");
-            }
+            OrderStatus oldStatus = requireTransition(orders, OrderStatus.PAID, "只有待支付订单才能支付");
 
             LocalDateTime payTime = LocalDateTime.now();
             PaymentRecord paymentRecord = buildMockPaymentRecord(orders, payTime);
             paymentRecordMapper.insert(paymentRecord);
 
-            int rows = ordersMapper.updateToPaidById(id, payTime, STATUS_PENDING_PAYMENT, STATUS_PAID);
+            int rows = ordersMapper.updateToPaidById(id, payTime, oldStatus.getCode(), OrderStatus.PAID.getCode());
             if (rows == 0) {
                 throw new BusinessException("订单状态已变化，请刷新后重试");
             }
@@ -149,7 +147,7 @@ public class OrderServiceImpl implements OrderService {
             return OrderPayVO.builder()
                     .orderId(orders.getId())
                     .orderNumber(orders.getNumber())
-                    .status(STATUS_PAID)
+                    .status(OrderStatus.PAID.getCode())
                     .amount(orders.getAmount())
                     .payTime(payTime)
                     .build();
@@ -159,43 +157,62 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void cancel(Long id) {
-        executeWithOrderStatusLock(id, () -> {
-            Orders orders = getOwnOrderOrThrow(id);
-            if (orders.getStatus() == STATUS_PAID) {
-                throw new BusinessException("已支付订单不能直接取消，请走退款流程");
-            }
-            if (orders.getStatus() == STATUS_COMPLETED) {
-                throw new BusinessException("已完成订单不能取消");
-            }
-            if (orders.getStatus() == STATUS_CANCELLED) {
-                throw new BusinessException("订单已取消，不能重复取消");
-            }
-            if (orders.getStatus() != STATUS_PENDING_PAYMENT) {
-                throw new BusinessException("只有待支付订单才能取消");
-            }
+        executeTimestampTransition(
+                id,
+                OrderStatus.CANCELLED,
+                this::getOwnOrderOrThrow,
+                "只有待支付订单才能取消",
+                (orderId, oldStatus) -> ordersMapper.updateToCancelledById(
+                        orderId, LocalDateTime.now(), oldStatus.getCode(), OrderStatus.CANCELLED.getCode()));
+    }
 
-            int rows = ordersMapper.updateToCancelledById(
-                    id, LocalDateTime.now(), STATUS_PENDING_PAYMENT, STATUS_CANCELLED);
-            if (rows == 0) {
-                throw new BusinessException("订单状态已变化，请刷新后重试");
-            }
-        });
+    @Override
+    @Transactional
+    public void accept(Long id) {
+        requireAdminSuperOperator();
+        executeStatusOnlyTransition(id, OrderStatus.ACCEPTED, this::getOrderOrThrow, "只有已支付订单才能接单");
+    }
+
+    @Override
+    @Transactional
+    public void startDelivery(Long id) {
+        requireAdminSuperOperator();
+        executeStatusOnlyTransition(id, OrderStatus.DELIVERING, this::getOrderOrThrow, "只有已接单订单才能开始配送");
     }
 
     @Override
     @Transactional
     public void complete(Long id) {
-        executeWithOrderStatusLock(id, () -> {
-            Orders orders = getOrderOrThrow(id);
-            if (orders.getStatus() != STATUS_PAID) {
-                throw new BusinessException("只有已支付订单才能完成");
-            }
+        requireAdminSuperOperator();
+        executeTimestampTransition(
+                id,
+                OrderStatus.COMPLETED,
+                this::getOrderOrThrow,
+                "只有配送中订单才能完成",
+                (orderId, oldStatus) -> ordersMapper.updateToCompletedById(
+                        orderId, LocalDateTime.now(), oldStatus.getCode(), OrderStatus.COMPLETED.getCode()));
+    }
 
-            int rows = ordersMapper.updateToCompletedById(id, LocalDateTime.now(), STATUS_PAID, STATUS_COMPLETED);
-            if (rows == 0) {
-                throw new BusinessException("订单状态已变化，请刷新后重试");
-            }
-        });
+    @Override
+    @Transactional
+    public void startRefund(Long id) {
+        requireAdminSuperOperator();
+        executeStatusOnlyTransition(
+                id,
+                OrderStatus.REFUNDING,
+                this::getOrderOrThrow,
+                "只有已支付或已接单订单才能发起内部模拟退款");
+    }
+
+    @Override
+    @Transactional
+    public void completeRefund(Long id) {
+        requireAdminSuperOperator();
+        executeStatusOnlyTransition(
+                id,
+                OrderStatus.REFUNDED,
+                this::getOrderOrThrow,
+                "只有模拟退款中的订单才能完成内部模拟退款");
     }
 
     private Orders getOwnOrderOrThrow(Long id) {
@@ -236,6 +253,11 @@ public class OrderServiceImpl implements OrderService {
         return Constants.ADMIN_USER_ROLE.equals(BaseContext.getCurrentUserRole());
     }
 
+    private void requireAdminSuperOperator() {
+        // ADMIN is the first-version maximum-permission demo operator, not the final merchant role.
+        PermissionChecker.requireAdmin();
+    }
+
     private Long getCurrentUserIdOrThrow() {
         Long userId = BaseContext.getCurrentUserId();
         if (userId == null) {
@@ -264,6 +286,42 @@ public class OrderServiceImpl implements OrderService {
             action.run();
             return null;
         });
+    }
+
+    private void executeStatusOnlyTransition(Long id,
+                                             OrderStatus targetStatus,
+                                             Function<Long, Orders> orderLoader,
+                                             String illegalMessage) {
+        executeTimestampTransition(
+                id,
+                targetStatus,
+                orderLoader,
+                illegalMessage,
+                (orderId, oldStatus) -> ordersMapper.updateStatusById(
+                        orderId, oldStatus.getCode(), targetStatus.getCode()));
+    }
+
+    private void executeTimestampTransition(Long id,
+                                            OrderStatus targetStatus,
+                                            Function<Long, Orders> orderLoader,
+                                            String illegalMessage,
+                                            BiFunction<Long, OrderStatus, Integer> updater) {
+        executeWithOrderStatusLock(id, () -> {
+            Orders orders = orderLoader.apply(id);
+            OrderStatus oldStatus = requireTransition(orders, targetStatus, illegalMessage);
+            int rows = updater.apply(id, oldStatus);
+            if (rows == 0) {
+                throw new BusinessException("订单状态已变化，请刷新后重试");
+            }
+        });
+    }
+
+    private OrderStatus requireTransition(Orders orders, OrderStatus targetStatus, String illegalMessage) {
+        OrderStatus oldStatus = OrderStatus.fromCode(orders.getStatus());
+        if (!oldStatus.canTransitionTo(targetStatus)) {
+            throw new BusinessException(illegalMessage);
+        }
+        return oldStatus;
     }
 
     private void releaseOrderStatusLock(String lockKey, String lockValue) {

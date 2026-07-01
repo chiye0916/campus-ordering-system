@@ -20,14 +20,22 @@ const statusText = {
   1: "待支付",
   2: "已支付",
   3: "已完成",
-  4: "已取消"
+  4: "已取消",
+  5: "已接单",
+  6: "配送中",
+  7: "模拟退款中",
+  8: "模拟已退款"
 };
 
 const statusClass = {
   1: "warning-button",
   2: "success-button",
   3: "button-secondary",
-  4: "danger-button"
+  4: "danger-button",
+  5: "success-button",
+  6: "warning-button",
+  7: "warning-button",
+  8: "button-secondary"
 };
 
 const loginPresets = {
@@ -482,7 +490,7 @@ function renderHomeMetrics() {
   const unpaid = state.orders.filter((order) => order.status === 1).length;
   const cartCount = state.cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
   const paidAmount = state.orders
-    .filter((order) => order.status === 2 || order.status === 3)
+    .filter((order) => [2, 3, 5, 6].includes(order.status))
     .reduce((sum, order) => sum + Number(order.amount || 0), 0);
   const growth = Math.floor(paidAmount);
   const memberLevel = getMemberLevel(growth);
@@ -540,7 +548,7 @@ function renderHomeMetrics() {
 function renderDashboard() {
   const total = state.orders.length;
   const amount = state.orders.reduce((sum, order) => sum + Number(order.amount || 0), 0);
-  const pending = state.orders.filter((order) => order.status === 1 || order.status === 2).length;
+  const pending = state.orders.filter((order) => [1, 2, 5, 6, 7].includes(order.status)).length;
   const paid = state.orders.filter((order) => order.status === 2).length;
 
   $("#dashboardMetrics").innerHTML = [
@@ -693,8 +701,12 @@ function renderOrders(target = $("#orderList"), adminMode = false) {
       <div class="row-actions">
         <button class="button button-secondary" type="button" data-action="order-detail" data-id="${order.id}">查看</button>
         ${order.status === 1 && !adminMode ? `<button class="button success-button" type="button" data-action="order-pay" data-id="${order.id}">支付</button>` : ""}
-        ${order.status !== 3 && order.status !== 4 ? `<button class="button danger-button" type="button" data-action="order-cancel" data-id="${order.id}">取消</button>` : ""}
-        ${adminMode && order.status === 2 ? `<button class="button success-button" type="button" data-action="order-complete" data-id="${order.id}">完成</button>` : ""}
+        ${order.status === 1 && !adminMode ? `<button class="button danger-button" type="button" data-action="order-cancel" data-id="${order.id}">取消</button>` : ""}
+        ${adminMode && order.status === 2 ? `<button class="button success-button" type="button" data-action="order-accept" data-id="${order.id}">接单</button>` : ""}
+        ${adminMode && order.status === 5 ? `<button class="button success-button" type="button" data-action="order-delivery-start" data-id="${order.id}">配送</button>` : ""}
+        ${adminMode && order.status === 6 ? `<button class="button success-button" type="button" data-action="order-complete" data-id="${order.id}">完成</button>` : ""}
+        ${adminMode && (order.status === 2 || order.status === 5) ? `<button class="button warning-button" type="button" data-action="order-refund-start" data-id="${order.id}">模拟退款</button>` : ""}
+        ${adminMode && order.status === 7 ? `<button class="button warning-button" type="button" data-action="order-refund-complete" data-id="${order.id}">完成退款</button>` : ""}
       </div>
     </div>
   `).join("");
@@ -1286,12 +1298,38 @@ function bindEvents() {
         showToast("订单已取消", "success");
       }
 
+      if (action === "order-accept") {
+        await api(`/order/${id}/accept`, { method: "PUT" });
+        await loadOrders();
+        showToast("订单已接单", "success");
+      }
+
+      if (action === "order-delivery-start") {
+        await api(`/order/${id}/delivery/start`, { method: "PUT" });
+        await loadOrders();
+        showToast("订单已开始配送", "success");
+      }
+
       if (action === "order-complete") {
         const confirmed = await confirmDialog("确认将订单标记为已完成吗？", { confirmText: "完成订单" });
         if (!confirmed) return;
         await api(`/order/${id}/complete`, { method: "PUT" });
         await loadOrders();
         showToast("订单已完成", "success");
+      }
+
+      if (action === "order-refund-start") {
+        const confirmed = await confirmDialog("确认发起内部模拟退款吗？", { danger: true, confirmText: "模拟退款" });
+        if (!confirmed) return;
+        await api(`/order/${id}/refund/start`, { method: "PUT" });
+        await loadOrders();
+        showToast("内部模拟退款已发起", "success");
+      }
+
+      if (action === "order-refund-complete") {
+        await api(`/order/${id}/refund/complete`, { method: "PUT" });
+        await loadOrders();
+        showToast("内部模拟退款已完成", "success");
       }
 
       if (action === "edit-category") {

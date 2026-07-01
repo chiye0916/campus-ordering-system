@@ -54,10 +54,38 @@ public class OrderController {
         return Result.success();
     }
 
+    @PutMapping("/{id}/accept")
+    public Result<Void> accept(@PathVariable Long id) {
+        PermissionChecker.requireAdmin();
+        orderService.accept(id);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/delivery/start")
+    public Result<Void> startDelivery(@PathVariable Long id) {
+        PermissionChecker.requireAdmin();
+        orderService.startDelivery(id);
+        return Result.success();
+    }
+
     @PutMapping("/{id}/complete")
     public Result<Void> complete(@PathVariable Long id) {
         PermissionChecker.requireAdmin();
         orderService.complete(id);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/refund/start")
+    public Result<Void> startRefund(@PathVariable Long id) {
+        PermissionChecker.requireAdmin();
+        orderService.startRefund(id);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/refund/complete")
+    public Result<Void> completeRefund(@PathVariable Long id) {
+        PermissionChecker.requireAdmin();
+        orderService.completeRefund(id);
         return Result.success();
     }
 }
