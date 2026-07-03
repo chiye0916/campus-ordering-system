@@ -5,6 +5,7 @@ import demo3.demo3_068.common.PermissionChecker;
 import demo3.demo3_068.common.Result;
 import demo3.demo3_068.dto.OrderPageQueryDTO;
 import demo3.demo3_068.dto.OrderSubmitDTO;
+import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.vo.OrderDetailVO;
 import demo3.demo3_068.vo.OrderPayVO;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -29,8 +31,12 @@ public class OrderController {
     }
 
     @PostMapping("/submit")
-    public Result<Long> submit(@Valid @RequestBody OrderSubmitDTO orderSubmitDTO) {
-        return Result.success(orderService.submit(orderSubmitDTO));
+    public Result<Long> submit(@Valid @RequestBody OrderSubmitDTO orderSubmitDTO,
+                               @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BusinessException(400, "Idempotency-Key 不能为空");
+        }
+        return Result.success(orderService.submit(orderSubmitDTO, idempotencyKey.trim()));
     }
 
     @GetMapping("/{id}")

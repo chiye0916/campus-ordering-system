@@ -8,6 +8,7 @@ import demo3.demo3_068.common.RedisDistributedLock;
 import demo3.demo3_068.dto.OrderPageQueryDTO;
 import demo3.demo3_068.dto.OrderSubmitDTO;
 import demo3.demo3_068.entity.Dish;
+import demo3.demo3_068.entity.OrderIdempotency;
 import demo3.demo3_068.entity.OrderDetail;
 import demo3.demo3_068.entity.Orders;
 import demo3.demo3_068.entity.PaymentRecord;
@@ -15,9 +16,11 @@ import demo3.demo3_068.entity.ShoppingCart;
 import demo3.demo3_068.mapper.DishMapper;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.OrderDetailMapper;
+import demo3.demo3_068.mapper.OrderIdempotencyMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
+import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.utils.OrderNumberUtil;
@@ -27,13 +30,19 @@ import demo3.demo3_068.vo.OrderItemVO;
 import demo3.demo3_068.vo.OrderPayVO;
 import demo3.demo3_068.vo.OrderVO;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -50,6 +59,7 @@ public class OrderServiceImpl implements OrderService {
 
     private final OrdersMapper ordersMapper;
     private final OrderDetailMapper orderDetailMapper;
+    private final OrderIdempotencyMapper orderIdempotencyMapper;
     private final ShoppingCartMapper shoppingCartMapper;
     private final DishMapper dishMapper;
     private final PaymentRecordMapper paymentRecordMapper;
@@ -57,12 +67,14 @@ public class OrderServiceImpl implements OrderService {
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
                             OrderDetailMapper orderDetailMapper,
+                            OrderIdempotencyMapper orderIdempotencyMapper,
                             ShoppingCartMapper shoppingCartMapper,
                             DishMapper dishMapper,
                             PaymentRecordMapper paymentRecordMapper,
                             RedisDistributedLock redisDistributedLock) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
+        this.orderIdempotencyMapper = orderIdempotencyMapper;
         this.shoppingCartMapper = shoppingCartMapper;
         this.dishMapper = dishMapper;
         this.paymentRecordMapper = paymentRecordMapper;
@@ -71,13 +83,32 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional
-    public Long submit(OrderSubmitDTO orderSubmitDTO) {
+    public Long submit(OrderSubmitDTO orderSubmitDTO, String idempotencyKey) {
         Long userId = getCurrentUserIdOrThrow();
+        String normalizedKey = idempotencyKey.trim();
+
+        OrderIdempotency existing = orderIdempotencyMapper.selectByUserIdAndKey(userId, normalizedKey);
+        if (existing != null) {
+            return handleExistingIdempotency(existing, userId, orderSubmitDTO);
+        }
+
         List<ShoppingCart> cartItems = shoppingCartMapper.selectByUserId(userId);
         if (cartItems.isEmpty()) {
             throw new BusinessException("购物车为空，不能下单");
         }
         List<ShoppingCart> refreshedCartItems = refreshCartItems(cartItems);
+        String requestHash = buildRequestHash(userId, orderSubmitDTO.getRemark(), refreshedCartItems);
+
+        OrderIdempotency orderIdempotency = buildProcessingIdempotency(userId, normalizedKey, requestHash);
+        try {
+            orderIdempotencyMapper.insert(orderIdempotency);
+        } catch (DuplicateKeyException e) {
+            OrderIdempotency duplicate = orderIdempotencyMapper.selectByUserIdAndKey(userId, normalizedKey);
+            if (duplicate == null) {
+                throw e;
+            }
+            return handleExistingIdempotency(duplicate, requestHash);
+        }
 
         BigDecimal totalAmount = refreshedCartItems.stream()
                 .map(item -> item.getDishPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
@@ -98,6 +129,14 @@ public class OrderServiceImpl implements OrderService {
         orderDetailMapper.insertBatch(details);
 
         shoppingCartMapper.deleteByUserId(userId);
+        int rows = orderIdempotencyMapper.markSucceeded(
+                orderIdempotency.getId(),
+                orders.getId(),
+                OrderIdempotencyStatus.SUCCEEDED.getCode(),
+                LocalDateTime.now());
+        if (rows == 0) {
+            throw new BusinessException("下单幂等记录状态更新失败，请重试");
+        }
         return orders.getId();
     }
 
@@ -357,6 +396,95 @@ public class OrderServiceImpl implements OrderService {
         return cartItems.stream()
                 .map(this::refreshCartItem)
                 .toList();
+    }
+
+    private Long handleExistingIdempotency(OrderIdempotency existing,
+                                           Long userId,
+                                           OrderSubmitDTO orderSubmitDTO) {
+        List<ShoppingCart> cartItems = shoppingCartMapper.selectByUserId(userId);
+        if (cartItems.isEmpty()) {
+            return handleExistingIdempotencyWithClearedCart(existing, userId, orderSubmitDTO);
+        }
+        List<ShoppingCart> refreshedCartItems = refreshCartItems(cartItems);
+        String requestHash = buildRequestHash(userId, orderSubmitDTO.getRemark(), refreshedCartItems);
+        return handleExistingIdempotency(existing, requestHash);
+    }
+
+    private Long handleExistingIdempotencyWithClearedCart(OrderIdempotency existing,
+                                                          Long userId,
+                                                          OrderSubmitDTO orderSubmitDTO) {
+        if (!Integer.valueOf(OrderIdempotencyStatus.SUCCEEDED.getCode()).equals(existing.getStatus())
+                || existing.getOrderId() == null) {
+            return handleExistingIdempotency(existing, null);
+        }
+        List<ShoppingCart> submittedItems = orderDetailMapper.selectByOrderId(existing.getOrderId()).stream()
+                .map(this::toSubmittedCartItem)
+                .toList();
+        String requestHash = buildRequestHash(userId, orderSubmitDTO.getRemark(), submittedItems);
+        return handleExistingIdempotency(existing, requestHash);
+    }
+
+    private Long handleExistingIdempotency(OrderIdempotency existing, String requestHash) {
+        if (requestHash != null && !requestHash.equals(existing.getRequestHash())) {
+            throw new BusinessException(409, "Idempotency-Key 已被不同下单请求使用");
+        }
+
+        OrderIdempotencyStatus status = OrderIdempotencyStatus.fromCode(existing.getStatus());
+        if (status == OrderIdempotencyStatus.SUCCEEDED && existing.getOrderId() != null) {
+            return existing.getOrderId();
+        }
+        if (status == OrderIdempotencyStatus.PROCESSING) {
+            throw new BusinessException(409, "订单正在处理中，请稍后重试");
+        }
+        throw new BusinessException(409, "上一次下单请求未成功，请使用新的 Idempotency-Key");
+    }
+
+    private OrderIdempotency buildProcessingIdempotency(Long userId, String idempotencyKey, String requestHash) {
+        LocalDateTime now = LocalDateTime.now();
+        OrderIdempotency orderIdempotency = new OrderIdempotency();
+        orderIdempotency.setUserId(userId);
+        orderIdempotency.setIdempotencyKey(idempotencyKey);
+        orderIdempotency.setRequestHash(requestHash);
+        orderIdempotency.setStatus(OrderIdempotencyStatus.PROCESSING.getCode());
+        orderIdempotency.setCreateTime(now);
+        orderIdempotency.setUpdateTime(now);
+        return orderIdempotency;
+    }
+
+    String buildRequestHash(Long userId, String remark, List<ShoppingCart> cartItems) {
+        StringBuilder content = new StringBuilder();
+        content.append("userId=").append(userId).append('\n');
+        content.append("remark=").append(remark == null ? "" : remark).append('\n');
+        cartItems.stream()
+                .sorted(Comparator.comparing(ShoppingCart::getDishId))
+                .forEach(item -> content
+                        .append("dishId=").append(item.getDishId())
+                        .append(",quantity=").append(item.getQuantity())
+                        .append(",dishPrice=").append(normalizeAmount(item.getDishPrice()))
+                        .append('\n'));
+        return sha256Hex(content.toString());
+    }
+
+    private String normalizeAmount(BigDecimal amount) {
+        return amount.stripTrailingZeros().toPlainString();
+    }
+
+    private String sha256Hex(String content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(content.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
+        }
+    }
+
+    private ShoppingCart toSubmittedCartItem(OrderDetail orderDetail) {
+        ShoppingCart shoppingCart = new ShoppingCart();
+        shoppingCart.setDishId(orderDetail.getDishId());
+        shoppingCart.setDishName(orderDetail.getDishName());
+        shoppingCart.setDishPrice(orderDetail.getDishPrice());
+        shoppingCart.setQuantity(orderDetail.getQuantity());
+        return shoppingCart;
     }
 
     private ShoppingCart refreshCartItem(ShoppingCart cartItem) {

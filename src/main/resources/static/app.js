@@ -111,6 +111,13 @@ function showError(container, text) {
   container.innerHTML = `<div class="error-state">${text}</div>`;
 }
 
+function createIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `order-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body !== undefined) {
@@ -941,8 +948,10 @@ async function openOrderConfirm() {
   if (!confirmed) return;
 
   try {
+    const idempotencyKey = createIdempotencyKey();
     const orderId = await api("/order/submit", {
       method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
       body: { remark: `${address}${remark ? `；${remark}` : ""}` }
     });
     $("#remarkInput").value = "";

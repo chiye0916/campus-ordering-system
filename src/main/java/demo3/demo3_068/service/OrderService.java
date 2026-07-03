@@ -9,7 +9,7 @@ import demo3.demo3_068.vo.OrderVO;
 
 public interface OrderService {
 
-    Long submit(OrderSubmitDTO orderSubmitDTO);
+    Long submit(OrderSubmitDTO orderSubmitDTO, String idempotencyKey);
 
     OrderDetailVO getDetail(Long id);
 
