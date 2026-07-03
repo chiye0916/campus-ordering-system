@@ -19,5 +19,13 @@ public interface OrderService {
 
     void cancel(Long id);
 
+    void accept(Long id);
+
+    void startDelivery(Long id);
+
     void complete(Long id);
+
+    void startRefund(Long id);
+
+    void completeRefund(Long id);
 }

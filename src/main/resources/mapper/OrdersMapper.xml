@@ -80,4 +80,11 @@
         where id = #{id}
           and status = #{oldStatus}
     </update>
+
+    <update id="updateStatusById">
+        update orders
+        set status = #{newStatus}
+        where id = #{id}
+          and status = #{oldStatus}
+    </update>
 </mapper>

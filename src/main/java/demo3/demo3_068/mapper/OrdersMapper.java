@@ -34,4 +34,8 @@ public interface OrdersMapper {
                               @Param("completeTime") LocalDateTime completeTime,
                               @Param("oldStatus") Integer oldStatus,
                               @Param("newStatus") Integer newStatus);
+
+    int updateStatusById(@Param("id") Long id,
+                         @Param("oldStatus") Integer oldStatus,
+                         @Param("newStatus") Integer newStatus);
 }

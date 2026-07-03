@@ -424,7 +424,7 @@ trade_no 以 PAY 开头且不为空
 success_time 不为空
 ```
 
-已支付订单不能直接取消，后续应走退款流程：
+已支付订单不能直接取消；本阶段没有用户申请退款接口，只支持管理员内部模拟退款：
 
 ```bash
 curl -X PUT "$BASE_URL/order/$ORDER_ID/cancel" \
@@ -435,7 +435,35 @@ curl -X PUT "$BASE_URL/order/$ORDER_ID/cancel" \
 
 ```text
 code=409
-message=已支付订单不能直接取消，请走退款流程
+message=只有待支付订单才能取消
+```
+
+已支付订单不能直接完成：
+
+```bash
+curl -X PUT "$BASE_URL/order/$ORDER_ID/complete" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+期望结果：
+
+```text
+code=409
+message=只有配送中订单才能完成
+```
+
+管理员接单：
+
+```bash
+curl -X PUT "$BASE_URL/order/$ORDER_ID/accept" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+管理员开始配送：
+
+```bash
+curl -X PUT "$BASE_URL/order/$ORDER_ID/delivery/start" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 管理员完成订单：
@@ -452,6 +480,18 @@ curl "$BASE_URL/order/$ORDER_ID" \
   -H "Authorization: Bearer $USER_TOKEN"
 ```
 
+管理员内部模拟退款验证可以使用另一笔已支付或已接单订单：
+
+```bash
+curl -X PUT "$BASE_URL/order/$REFUND_ORDER_ID/refund/start" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+curl -X PUT "$BASE_URL/order/$REFUND_ORDER_ID/refund/complete" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+期望状态依次为 `7` 模拟退款中、`8` 模拟已退款。`6` 配送中和 `3` 已完成订单不能在本阶段发起退款。
+
 ## 6. 订单异常边界测试
 
 已完成订单不能取消：
@@ -465,7 +505,7 @@ curl -X PUT "$BASE_URL/order/$ORDER_ID/cancel" \
 
 ```text
 code=409
-message=已完成订单不能取消
+message=只有待支付订单才能取消
 ```
 
 已完成订单不能重复支付：
@@ -555,7 +595,7 @@ curl -X PUT "$BASE_URL/order/$LOCK_ORDER_ID/cancel" \
 
 ```text
 code=409
-message=已支付订单不能直接取消，请走退款流程
+message=只有待支付订单才能取消
 ```
 
 普通用户不能完成订单：
@@ -793,13 +833,19 @@ order by id;
 2 已支付
 3 已完成
 4 已取消
+5 已接单
+6 配送中
+7 模拟退款中
+8 模拟已退款
 ```
 
 合法流转：
 
 ```text
-待支付 -> 已支付 -> 已完成
+待支付 -> 已支付 -> 已接单 -> 配送中 -> 已完成
 待支付 -> 已取消
+已支付 -> 模拟退款中 -> 模拟已退款
+已接单 -> 模拟退款中 -> 模拟已退款
 ```
 
-说明：已支付订单不能直接取消，后续如果需要取消已支付订单，应单独设计退款流程。
+说明：状态数字大小不是生命周期顺序，不能用 `status > 2` 之类的判断推导订单进度。当前 `ADMIN` 是第一版最大权限演示操作员，用于接单、配送、完成、内部模拟退款；它不是最终商家角色。本 change 不提供用户申请退款接口。
