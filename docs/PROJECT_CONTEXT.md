@@ -57,7 +57,7 @@
 
 正在进行：
 
-- 正在实现/验证 `add-order-submit-idempotency` change；下一步按 `docs/API_TEST.md` 做完整回归联调
+- `add-order-submit-idempotency` change 已实现、同步主 spec 并归档；下一步按 `docs/API_TEST.md` 做完整回归联调
 
 ## 重要约定
 
@@ -233,9 +233,8 @@ find src -maxdepth 4 -type f | sort
 
 ## 下一步计划
 
-1. 运行 `./mvnw test` 验证下单幂等单元测试和现有测试。
-2. 按 `docs/API_TEST.md` 从登录到订单完整跑一遍，重点验证 `Idempotency-Key` 缺失、重复成功、同 key 不同内容冲突。
-3. 后续可进入前端页面或继续补管理权限。
+1. 按 `docs/API_TEST.md` 从登录到订单完整跑一遍，重点验证 `Idempotency-Key` 缺失、重复成功、同 key 不同内容冲突。
+2. 后续可进入前端页面或继续补管理权限。
 
 ## 待用户补充
 
