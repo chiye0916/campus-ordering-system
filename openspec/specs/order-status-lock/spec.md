@@ -1,3 +1,7 @@
+## Purpose
+
+Order status locking prevents concurrent requests from executing conflicting order status transitions while database status conditions remain the final consistency guard.
+
 ## Requirements
 
 ### Requirement: Redis Lock Protects Order Status Transitions

@@ -62,7 +62,8 @@
 
 正在进行：
 
-- 当前 change：`add-dish-stock-with-records` 已进入实现和验证阶段；下一步按 `docs/API_TEST.md` 做库存与订单完整回归联调
+- 当前没有 active change；`add-dish-stock-with-records` 已实现、同步主 specs 并归档
+- 下一步按 `docs/API_TEST.md` 做库存与订单完整回归联调，然后再开始 RabbitMQ 订单超时取消 change
 
 ## 重要约定
 

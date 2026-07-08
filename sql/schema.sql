@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS orders (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     number VARCHAR(64) NOT NULL,
     user_id BIGINT NOT NULL,
-    status TINYINT NOT NULL COMMENT '1:待支付, 2:已支付, 3:已完成, 4:已取消',
+    status TINYINT NOT NULL COMMENT '1:待支付, 2:已支付, 3:已完成, 4:已取消, 5:已接单, 6:配送中, 7:模拟退款中, 8:模拟已退款',
     amount DECIMAL(10, 2) NOT NULL,
     remark VARCHAR(255),
     order_time DATETIME NOT NULL,

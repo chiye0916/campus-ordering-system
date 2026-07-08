@@ -1,3 +1,7 @@
+## Purpose
+
+Order status defines the explicit lifecycle states, allowed transitions, and actor permissions for order operations.
+
 ## Requirements
 
 ### Requirement: Expanded Order Statuses
