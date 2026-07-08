@@ -220,6 +220,44 @@ curl -X POST "$BASE_URL/dish" \
 DISH_ID="把新增商品返回的 data 粘贴到这里"
 ```
 
+库存独立于商品创建，需要管理员单独初始化可用库存。请求体字段必须使用 `availableStock`：
+
+```bash
+curl -X PUT "$BASE_URL/dish/$DISH_ID/stock" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"availableStock":100,"remark":"接口测试初始化库存"}'
+```
+
+查询库存：
+
+```bash
+curl "$BASE_URL/dish/$DISH_ID/stock" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+期望结果：
+
+```text
+availableStock=100
+lockedStock=0
+```
+
+普通用户设置库存应该失败：
+
+```bash
+curl -X PUT "$BASE_URL/dish/$DISH_ID/stock" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d '{"availableStock":50}'
+```
+
+期望结果：
+
+```json
+{"code":403,"message":"无管理员权限","data":null}
+```
+
 管理员分页查询商品：
 
 ```bash
@@ -368,6 +406,33 @@ curl "$BASE_URL/cart/list" \
   -H "Authorization: Bearer $USER_TOKEN"
 ```
 
+提交订单会锁库存：`available_stock` 减少购物车数量，`locked_stock` 增加购物车数量，并写入 `LOCK` 流水：
+
+```bash
+docker exec -it mysql8 mysql -u chiye -p1234 demo3_db
+```
+
+```sql
+select dish_id, available_stock, locked_stock, version
+from dish_stock
+where dish_id = 你的商品ID;
+
+select dish_id, order_id, change_type, change_quantity,
+       available_before, available_after, locked_before, locked_after, operator_id, remark
+from stock_record
+where order_id = 你的订单ID
+order by id;
+exit;
+```
+
+期望结果：
+
+```text
+dish_stock.available_stock 从 100 变为 98
+dish_stock.locked_stock 从 0 变为 2
+stock_record 存在一条 LOCK，change_quantity=2，order_id=ORDER_ID
+```
+
 重复使用同一个 `ORDER_SUBMIT_KEY` 重试同一次提交，应该直接返回第一次的订单 ID，不创建新订单：
 
 ```bash
@@ -384,6 +449,7 @@ curl -X POST "$BASE_URL/order/submit" \
 code=200
 data 等于上面的 ORDER_ID
 orders 表不会新增第二笔同 key 订单
+stock_record 不会新增第二条 LOCK
 ```
 
 查询订单详情：
@@ -447,6 +513,28 @@ pay_channel=MOCK
 status=2
 trade_no 以 PAY 开头且不为空
 success_time 不为空
+```
+
+支付成功会确认锁定库存：`locked_stock` 减少订单数量，`available_stock` 不变，并写入 `CONFIRM` 流水：
+
+```sql
+select dish_id, available_stock, locked_stock, version
+from dish_stock
+where dish_id = 你的商品ID;
+
+select dish_id, order_id, change_type, change_quantity,
+       available_before, available_after, locked_before, locked_after, operator_id, remark
+from stock_record
+where order_id = 你的订单ID
+order by id;
+```
+
+期望结果：
+
+```text
+dish_stock.available_stock 仍为 98
+dish_stock.locked_stock 从 2 变为 0
+stock_record 中新增 CONFIRM，change_quantity=2
 ```
 
 已支付订单不能直接取消；本阶段没有用户申请退款接口，只支持管理员内部模拟退款：
@@ -598,6 +686,56 @@ where order_id = 你的 LOCK_ORDER_ID
 group by order_id, pay_channel, status;
 ```
 
+库存并发验证：把商品可用库存设置为一个很小的值，例如 3，然后并发提交多笔数量为 1 的订单。成功订单数不应该超过可用库存，失败请求应返回库存不足或处理中相关业务错误。
+
+```bash
+curl -X PUT "$BASE_URL/dish/$DISH_ID/stock" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"availableStock":3,"remark":"库存并发验证"}'
+```
+
+准备多个普通用户或为同一用户依次清购物车、加购、提交。真实压测建议使用不同用户和不同购物车；本 Demo 可以用 HTTP 工具并发发起多组：
+
+```bash
+for i in 1 2 3 4 5; do
+  (
+    curl -X DELETE "$BASE_URL/cart/clean" -H "Authorization: Bearer $USER_TOKEN" >/dev/null
+    curl -X POST "$BASE_URL/cart/add" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $USER_TOKEN" \
+      -d "{\"dishId\":$DISH_ID,\"quantity\":1}" >/dev/null
+    curl -X POST "$BASE_URL/order/submit" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $USER_TOKEN" \
+      -H "Idempotency-Key: $(uuidgen)" \
+      -d "{\"remark\":\"库存并发验证-$i\"}"
+  ) &
+done
+wait
+```
+
+验证库存没有被超卖：
+
+```sql
+select dish_id, available_stock, locked_stock
+from dish_stock
+where dish_id = 你的商品ID;
+
+select change_type, count(*) as count, sum(change_quantity) as quantity
+from stock_record
+where dish_id = 你的商品ID
+  and change_type = 'LOCK'
+group by change_type;
+```
+
+期望结果：
+
+```text
+available_stock 不小于 0
+成功 LOCK 的总数量不超过设置的 availableStock
+```
+
 检查 Redis 锁 key 已释放：
 
 ```bash
@@ -622,6 +760,57 @@ curl -X PUT "$BASE_URL/order/$LOCK_ORDER_ID/cancel" \
 ```text
 code=409
 message=只有待支付订单才能取消
+```
+
+取消待支付订单会释放锁定库存。重新创建一笔待支付订单：
+
+```bash
+curl -X POST "$BASE_URL/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
+
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"remark":"取消释放库存测试"}'
+```
+
+复制返回的 `data`：
+
+```bash
+CANCEL_ORDER_ID="把待取消订单 ID 粘贴到这里"
+```
+
+取消订单：
+
+```bash
+curl -X PUT "$BASE_URL/order/$CANCEL_ORDER_ID/cancel" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+验证库存和流水：
+
+```sql
+select dish_id, available_stock, locked_stock, version
+from dish_stock
+where dish_id = 你的商品ID;
+
+select dish_id, order_id, change_type, change_quantity,
+       available_before, available_after, locked_before, locked_after, operator_id, remark
+from stock_record
+where order_id = 你的 CANCEL_ORDER_ID
+order by id;
+```
+
+期望结果：
+
+```text
+订单取消前 LOCK 使 available_stock -1、locked_stock +1
+取消后 RELEASE 使 available_stock +1、locked_stock -1
+stock_record 中该订单有 LOCK 和 RELEASE 各一条
+重复取消不会新增第二条 RELEASE
 ```
 
 普通用户不能完成订单：
@@ -891,6 +1080,24 @@ select id, name, sort, create_time, update_time from category order by sort, id;
 
 ```sql
 select id, category_id, name, price, status, create_time, update_time from dish order by id;
+```
+
+查看库存：
+
+```sql
+select id, dish_id, available_stock, locked_stock, version, create_time, update_time
+from dish_stock
+order by dish_id;
+```
+
+查看库存流水：
+
+```sql
+select id, dish_id, order_id, change_type, change_quantity,
+       available_before, available_after, locked_before, locked_after,
+       operator_id, remark, create_time
+from stock_record
+order by id;
 ```
 
 查看购物车：

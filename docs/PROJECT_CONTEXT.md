@@ -53,11 +53,16 @@
 - `POST /order/submit` 已加入 MySQL 下单幂等：客户端必须传 `Idempotency-Key`，成功仍返回 `Result<Long>` 的订单 ID
 - 已新增 `order_idempotency` 表，用 `(user_id, idempotency_key)` 唯一约束记录下单幂等状态
 - 已补充订单支付接口：`PUT /order/{id}/pay`
+- 已新增库存模块：`dish_stock` 保存可用/锁定库存，`stock_record` 保存 SET/LOCK/CONFIRM/RELEASE 库存流水
+- 已新增管理员库存接口：`GET /dish/{id}/stock`、`PUT /dish/{id}/stock`，设置字段为 `availableStock`
+- 下单会先创建待支付订单获得 `order_id`，再按 dishId 聚合并升序锁库存、写 `LOCK` 流水；幂等重复返回原订单时不会重复锁库存
+- 支付待支付订单会在订单状态条件更新成功后确认锁定库存、写 `CONFIRM` 流水；重复支付不会重复扣锁定库存
+- 取消待支付订单会在订单状态条件更新成功后释放锁定库存、写 `RELEASE` 流水；重复取消不会重复释放库存
 - 已整理接口联调文档：`docs/API_TEST.md`
 
 正在进行：
 
-- `add-order-submit-idempotency` change 已实现、同步主 spec 并归档；下一步按 `docs/API_TEST.md` 做完整回归联调
+- 当前 change：`add-dish-stock-with-records` 已进入实现和验证阶段；下一步按 `docs/API_TEST.md` 做库存与订单完整回归联调
 
 ## 重要约定
 
@@ -74,6 +79,10 @@
 - 下单幂等只覆盖 `POST /order/submit`，不扩展到库存、RabbitMQ、支付回调。
 - 下单缺少或空白 `Idempotency-Key` 返回 `code=400`；同用户同 key 同请求成功重试返回原 orderId；同 key 不同请求或处理中返回 `code=409`。
 - 下单 `request_hash` 基于 `userId`、`remark`、当前购物车内容按 `dishId` 排序后的 `dishId`、`quantity`、`dishPrice`，不包含 `Idempotency-Key`。
+- 库存独立于商品表，管理员必须单独初始化 `dish_stock`；未初始化库存的商品不能下单。
+- 管理员 SET 库存只设置 `available_stock`，不清空 `locked_stock`。
+- 库存生命周期：SET 改 available；LOCK 使 available 减少且 locked 增加；CONFIRM 使 locked 减少且 available 不变；RELEASE 使 locked 减少且 available 增加。
+- 写库存流水前必须在同一事务中 `select ... for update` 读取库存行，同时保留 MySQL 条件更新保护。
 - 金额计算必须使用 `BigDecimal`，不能使用 `double`。
 - SQL 继续使用 MyBatis XML。
 - 新功能要小步实现，保持已有功能不破坏，每阶段运行测试或说明验证方式。
@@ -93,6 +102,8 @@
 - `orders`：订单主表
 - `order_detail`：订单明细表
 - `order_idempotency`：下单幂等表，唯一索引 `(user_id, idempotency_key)`，状态 `1` 处理中、`2` 已成功、`3` 已失败
+- `dish_stock`：库存现状表，`dish_id` 唯一，记录 `available_stock`、`locked_stock`、`version`
+- `stock_record`：库存流水表，记录 SET/LOCK/CONFIRM/RELEASE 的 before/after、订单、操作人和备注
 
 订单状态：
 
@@ -129,6 +140,8 @@
 - `GET /dish/list`：根据分类查询商品，计划使用 Redis 缓存
 - `PUT /dish/{id}`：修改商品
 - `PUT /dish/{id}/status`：商品上下架
+- `GET /dish/{id}/stock`：管理员查询商品库存
+- `PUT /dish/{id}/stock`：管理员设置商品可用库存，body 使用 `availableStock`
 
 购物车接口：
 
@@ -186,6 +199,11 @@
 - `src/main/java/demo3/demo3_068/model/OrderIdempotencyStatus.java`：下单幂等状态枚举
 - `src/main/java/demo3/demo3_068/mapper/OrderIdempotencyMapper.java`：下单幂等 Mapper 接口
 - `src/main/resources/mapper/OrderIdempotencyMapper.xml`：下单幂等 SQL
+- `src/main/java/demo3/demo3_068/service/impl/DishStockServiceImpl.java`：库存设置、锁定、确认、释放和流水写入
+- `src/main/java/demo3/demo3_068/mapper/DishStockMapper.java`：库存 Mapper 接口
+- `src/main/resources/mapper/DishStockMapper.xml`：库存行锁读取与条件更新 SQL
+- `src/main/java/demo3/demo3_068/mapper/StockRecordMapper.java`：库存流水 Mapper 接口
+- `src/main/resources/mapper/StockRecordMapper.xml`：库存流水 SQL
 - `docs/API_TEST.md`：接口联调命令和数据库验证 SQL
 
 计划创建：
@@ -233,8 +251,9 @@ find src -maxdepth 4 -type f | sort
 
 ## 下一步计划
 
-1. 按 `docs/API_TEST.md` 从登录到订单完整跑一遍，重点验证 `Idempotency-Key` 缺失、重复成功、同 key 不同内容冲突。
-2. 后续可进入前端页面或继续补管理权限。
+1. 按 `docs/API_TEST.md` 从登录、商品、库存初始化、下单、支付、取消完整跑一遍，重点验证库存 SET/LOCK/CONFIRM/RELEASE 流水。
+2. 后续 RabbitMQ 超时取消可以复用当前 `releaseLockedStock` 语义：只对仍为待支付且状态条件更新成功的订单释放锁定库存。
+3. 后续可进入前端页面或继续补更细的商家/平台权限。
 
 ## 待用户补充
 

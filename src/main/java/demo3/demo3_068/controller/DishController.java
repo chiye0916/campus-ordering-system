@@ -6,9 +6,12 @@ import demo3.demo3_068.common.Result;
 import demo3.demo3_068.dto.DishCreateDTO;
 import demo3.demo3_068.dto.DishListQueryDTO;
 import demo3.demo3_068.dto.DishPageQueryDTO;
+import demo3.demo3_068.dto.DishStockSetDTO;
 import demo3.demo3_068.dto.DishStatusDTO;
 import demo3.demo3_068.dto.DishUpdateDTO;
+import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.DishService;
+import demo3.demo3_068.vo.DishStockVO;
 import demo3.demo3_068.vo.DishVO;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,9 +29,11 @@ import java.util.List;
 public class DishController {
 
     private final DishService dishService;
+    private final DishStockService dishStockService;
 
-    public DishController(DishService dishService) {
+    public DishController(DishService dishService, DishStockService dishStockService) {
         this.dishService = dishService;
+        this.dishStockService = dishStockService;
     }
 
     @PostMapping
@@ -61,6 +66,20 @@ public class DishController {
                                      @Valid @RequestBody DishStatusDTO dishStatusDTO) {
         PermissionChecker.requireAdmin();
         dishService.updateStatus(id, dishStatusDTO);
+        return Result.success();
+    }
+
+    @GetMapping("/{id}/stock")
+    public Result<DishStockVO> getStock(@PathVariable Long id) {
+        PermissionChecker.requireAdmin();
+        return Result.success(dishStockService.getStock(id));
+    }
+
+    @PutMapping("/{id}/stock")
+    public Result<Void> setStock(@PathVariable Long id,
+                                 @Valid @RequestBody DishStockSetDTO dishStockSetDTO) {
+        PermissionChecker.requireAdmin();
+        dishStockService.setStock(id, dishStockSetDTO);
         return Result.success();
     }
 }

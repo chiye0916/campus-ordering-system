@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.DishStockMapper">
+
+    <resultMap id="DishStockResultMap" type="demo3.demo3_068.entity.DishStock">
+        <id column="id" property="id"/>
+        <result column="dish_id" property="dishId"/>
+        <result column="available_stock" property="availableStock"/>
+        <result column="locked_stock" property="lockedStock"/>
+        <result column="version" property="version"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <select id="selectByDishId" resultMap="DishStockResultMap">
+        select id, dish_id, available_stock, locked_stock, version, create_time, update_time
+        from dish_stock
+        where dish_id = #{dishId}
+    </select>
+
+    <select id="selectByDishIdForUpdate" resultMap="DishStockResultMap">
+        select id, dish_id, available_stock, locked_stock, version, create_time, update_time
+        from dish_stock
+        where dish_id = #{dishId}
+        for update
+    </select>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.DishStock"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into dish_stock (dish_id, available_stock, locked_stock, version)
+        values (#{dishId}, #{availableStock}, #{lockedStock}, #{version})
+    </insert>
+
+    <update id="updateAvailableStockByDishId">
+        update dish_stock
+        set available_stock = #{availableStock},
+            version = version + 1
+        where dish_id = #{dishId}
+          and #{availableStock} >= 0
+    </update>
+
+    <update id="lockStock">
+        update dish_stock
+        set available_stock = available_stock - #{quantity},
+            locked_stock = locked_stock + #{quantity},
+            version = version + 1
+        where dish_id = #{dishId}
+          and available_stock >= #{quantity}
+          and #{quantity} > 0
+    </update>
+
+    <update id="confirmLockedStock">
+        update dish_stock
+        set locked_stock = locked_stock - #{quantity},
+            version = version + 1
+        where dish_id = #{dishId}
+          and locked_stock >= #{quantity}
+          and #{quantity} > 0
+    </update>
+
+    <update id="releaseLockedStock">
+        update dish_stock
+        set available_stock = available_stock + #{quantity},
+            locked_stock = locked_stock - #{quantity},
+            version = version + 1
+        where dish_id = #{dishId}
+          and locked_stock >= #{quantity}
+          and #{quantity} > 0
+    </update>
+</mapper>
