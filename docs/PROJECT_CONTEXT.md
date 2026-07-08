@@ -50,12 +50,14 @@
 - 购物车使用 `BaseContext` 获取当前用户 ID，前端不传 `userId`
 - 已实现订单模块：提交订单、订单详情、订单分页、支付、取消、接单、开始配送、完成订单、管理员内部模拟退款
 - 下单使用 `@Transactional`，保证订单主表、订单明细、购物车清空同时成功或回滚
+- `POST /order/submit` 已加入 MySQL 下单幂等：客户端必须传 `Idempotency-Key`，成功仍返回 `Result<Long>` 的订单 ID
+- 已新增 `order_idempotency` 表，用 `(user_id, idempotency_key)` 唯一约束记录下单幂等状态
 - 已补充订单支付接口：`PUT /order/{id}/pay`
 - 已整理接口联调文档：`docs/API_TEST.md`
 
 正在进行：
 
-- 核心功能闭环已完成，下一步按 `docs/API_TEST.md` 做完整回归联调
+- `add-order-submit-idempotency` change 已实现、同步主 spec 并归档；下一步按 `docs/API_TEST.md` 做完整回归联调
 
 ## 重要约定
 
@@ -69,6 +71,9 @@
 - 当前用户 ID 必须由后端从 JWT 解析并放入 `BaseContext`，不能让前端传。
 - 请求结束必须清理 `ThreadLocal`，避免线程复用导致用户串号。
 - 下单必须使用 `@Transactional`。
+- 下单幂等只覆盖 `POST /order/submit`，不扩展到库存、RabbitMQ、支付回调。
+- 下单缺少或空白 `Idempotency-Key` 返回 `code=400`；同用户同 key 同请求成功重试返回原 orderId；同 key 不同请求或处理中返回 `code=409`。
+- 下单 `request_hash` 基于 `userId`、`remark`、当前购物车内容按 `dishId` 排序后的 `dishId`、`quantity`、`dishPrice`，不包含 `Idempotency-Key`。
 - 金额计算必须使用 `BigDecimal`，不能使用 `double`。
 - SQL 继续使用 MyBatis XML。
 - 新功能要小步实现，保持已有功能不破坏，每阶段运行测试或说明验证方式。
@@ -87,6 +92,7 @@
 - `shopping_cart`：购物车表
 - `orders`：订单主表
 - `order_detail`：订单明细表
+- `order_idempotency`：下单幂等表，唯一索引 `(user_id, idempotency_key)`，状态 `1` 处理中、`2` 已成功、`3` 已失败
 
 订单状态：
 
@@ -176,6 +182,10 @@
 - `src/main/resources/mapper/OrdersMapper.xml`：订单主表 SQL
 - `src/main/java/demo3/demo3_068/mapper/OrderDetailMapper.java`：订单明细 Mapper 接口
 - `src/main/resources/mapper/OrderDetailMapper.xml`：订单明细 SQL
+- `src/main/java/demo3/demo3_068/entity/OrderIdempotency.java`：下单幂等记录实体
+- `src/main/java/demo3/demo3_068/model/OrderIdempotencyStatus.java`：下单幂等状态枚举
+- `src/main/java/demo3/demo3_068/mapper/OrderIdempotencyMapper.java`：下单幂等 Mapper 接口
+- `src/main/resources/mapper/OrderIdempotencyMapper.xml`：下单幂等 SQL
 - `docs/API_TEST.md`：接口联调命令和数据库验证 SQL
 
 计划创建：
@@ -223,9 +233,8 @@ find src -maxdepth 4 -type f | sort
 
 ## 下一步计划
 
-1. 重启项目，验证新增的 `PUT /order/{id}/pay`。
-2. 按 `docs/API_TEST.md` 从登录到订单完整跑一遍。
-3. 后续可进入前端页面或继续补管理权限。
+1. 按 `docs/API_TEST.md` 从登录到订单完整跑一遍，重点验证 `Idempotency-Key` 缺失、重复成功、同 key 不同内容冲突。
+2. 后续可进入前端页面或继续补管理权限。
 
 ## 待用户补充
 

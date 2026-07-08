@@ -339,12 +339,19 @@ curl -X POST "$BASE_URL/cart/add" \
 
 ## 5. 订单主流程测试
 
+生成本次提交使用的幂等键。同一次提交动作重试时复用同一个值；新的提交动作换一个新值：
+
+```bash
+ORDER_SUBMIT_KEY="$(uuidgen)"
+```
+
 提交订单：
 
 ```bash
 curl -X POST "$BASE_URL/order/submit" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $ORDER_SUBMIT_KEY" \
   -d '{"remark":"少放辣"}'
 ```
 
@@ -359,6 +366,24 @@ ORDER_ID="把提交订单返回的 data 粘贴到这里"
 ```bash
 curl "$BASE_URL/cart/list" \
   -H "Authorization: Bearer $USER_TOKEN"
+```
+
+重复使用同一个 `ORDER_SUBMIT_KEY` 重试同一次提交，应该直接返回第一次的订单 ID，不创建新订单：
+
+```bash
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $ORDER_SUBMIT_KEY" \
+  -d '{"remark":"少放辣"}'
+```
+
+期望结果：
+
+```text
+code=200
+data 等于上面的 ORDER_ID
+orders 表不会新增第二笔同 key 订单
 ```
 
 查询订单详情：
@@ -536,6 +561,7 @@ curl -X POST "$BASE_URL/cart/add" \
 curl -X POST "$BASE_URL/order/submit" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"remark":"Redis锁并发测试"}'
 ```
 
@@ -620,6 +646,7 @@ curl -X DELETE "$BASE_URL/cart/clean" \
 curl -X POST "$BASE_URL/order/submit" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"remark":"空购物车测试"}'
 ```
 
@@ -628,6 +655,67 @@ curl -X POST "$BASE_URL/order/submit" \
 ```text
 code=409
 message=购物车为空，不能下单
+```
+
+缺少或空白 `Idempotency-Key` 不能下单：
+
+```bash
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d '{"remark":"缺少幂等键测试"}'
+
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key:    " \
+  -d '{"remark":"空白幂等键测试"}'
+```
+
+期望结果：
+
+```text
+code=400
+message=Idempotency-Key 不能为空
+```
+
+同一个用户复用同一个 `Idempotency-Key` 提交不同内容，应该返回 `409`，不创建新订单：
+
+```bash
+CONFLICT_SUBMIT_KEY="$(uuidgen)"
+
+curl -X DELETE "$BASE_URL/cart/clean" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+curl -X POST "$BASE_URL/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
+
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $CONFLICT_SUBMIT_KEY" \
+  -d '{"remark":"第一次内容"}'
+
+curl -X POST "$BASE_URL/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"dishId\":$DISH_ID,\"quantity\":1}"
+
+curl -X POST "$BASE_URL/order/submit" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $CONFLICT_SUBMIT_KEY" \
+  -d '{"remark":"第二次不同内容"}'
+```
+
+期望结果：
+
+```text
+第二次 order/submit 返回 code=409
+message=Idempotency-Key 已被不同下单请求使用
+orders 表不会因为第二次请求新增订单
 ```
 
 商品改价后，购物车应该显示最新价格，并按最新价格下单：
@@ -649,6 +737,7 @@ curl "$BASE_URL/cart/list" \
 curl -X POST "$BASE_URL/order/submit" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"remark":"价格变化测试"}'
 ```
 
@@ -701,6 +790,7 @@ curl "$BASE_URL/cart/list" \
 curl -X POST "$BASE_URL/order/submit" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"remark":"下架商品测试"}'
 ```
 
@@ -742,6 +832,7 @@ curl -X PUT "$BASE_URL/dish/$DISH_ID/status" \
 curl -X POST "$BASE_URL/order/submit" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"remark":'
 ```
 
@@ -822,6 +913,22 @@ order by id;
 select id, order_id, dish_id, dish_name, dish_price, quantity, amount
 from order_detail
 order by id;
+```
+
+查看下单幂等记录：
+
+```sql
+select id, user_id, idempotency_key, request_hash, order_id, status, create_time, update_time
+from order_idempotency
+order by id;
+```
+
+状态说明：
+
+```text
+1 PROCESSING / 处理中
+2 SUCCEEDED / 已成功
+3 FAILED / 已失败
 ```
 
 ## 9. 状态说明
