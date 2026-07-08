@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.StockRecordMapper">
+
+    <resultMap id="StockRecordResultMap" type="demo3.demo3_068.entity.StockRecord">
+        <id column="id" property="id"/>
+        <result column="dish_id" property="dishId"/>
+        <result column="order_id" property="orderId"/>
+        <result column="change_type" property="changeType"/>
+        <result column="change_quantity" property="changeQuantity"/>
+        <result column="available_before" property="availableBefore"/>
+        <result column="available_after" property="availableAfter"/>
+        <result column="locked_before" property="lockedBefore"/>
+        <result column="locked_after" property="lockedAfter"/>
+        <result column="operator_id" property="operatorId"/>
+        <result column="remark" property="remark"/>
+        <result column="create_time" property="createTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.StockRecord"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into stock_record (
+            dish_id, order_id, change_type, change_quantity,
+            available_before, available_after, locked_before, locked_after,
+            operator_id, remark, create_time
+        )
+        values (
+            #{dishId}, #{orderId}, #{changeType}, #{changeQuantity},
+            #{availableBefore}, #{availableAfter}, #{lockedBefore}, #{lockedAfter},
+            #{operatorId}, #{remark}, #{createTime}
+        )
+    </insert>
+
+    <select id="selectByDishId" resultMap="StockRecordResultMap">
+        select id, dish_id, order_id, change_type, change_quantity,
+               available_before, available_after, locked_before, locked_after,
+               operator_id, remark, create_time
+        from stock_record
+        where dish_id = #{dishId}
+        order by create_time asc, id asc
+    </select>
+
+    <select id="selectByOrderId" resultMap="StockRecordResultMap">
+        select id, dish_id, order_id, change_type, change_quantity,
+               available_before, available_after, locked_before, locked_after,
+               operator_id, remark, create_time
+        from stock_record
+        where order_id = #{orderId}
+        order by create_time asc, id asc
+    </select>
+</mapper>

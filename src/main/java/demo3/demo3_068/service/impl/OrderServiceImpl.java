@@ -22,6 +22,7 @@ import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.utils.OrderNumberUtil;
 import demo3.demo3_068.utils.PaymentTradeNoUtil;
@@ -44,10 +45,12 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -64,6 +67,7 @@ public class OrderServiceImpl implements OrderService {
     private final DishMapper dishMapper;
     private final PaymentRecordMapper paymentRecordMapper;
     private final RedisDistributedLock redisDistributedLock;
+    private final DishStockService dishStockService;
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
                             OrderDetailMapper orderDetailMapper,
@@ -71,7 +75,8 @@ public class OrderServiceImpl implements OrderService {
                             ShoppingCartMapper shoppingCartMapper,
                             DishMapper dishMapper,
                             PaymentRecordMapper paymentRecordMapper,
-                            RedisDistributedLock redisDistributedLock) {
+                            RedisDistributedLock redisDistributedLock,
+                            DishStockService dishStockService) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.orderIdempotencyMapper = orderIdempotencyMapper;
@@ -79,6 +84,7 @@ public class OrderServiceImpl implements OrderService {
         this.dishMapper = dishMapper;
         this.paymentRecordMapper = paymentRecordMapper;
         this.redisDistributedLock = redisDistributedLock;
+        this.dishStockService = dishStockService;
     }
 
     @Override
@@ -122,6 +128,8 @@ public class OrderServiceImpl implements OrderService {
         orders.setRemark(orderSubmitDTO.getRemark());
         orders.setOrderTime(LocalDateTime.now());
         ordersMapper.insert(orders);
+
+        dishStockService.lockStock(orders.getId(), aggregateCartQuantities(refreshedCartItems), userId);
 
         List<OrderDetail> details = refreshedCartItems.stream()
                 .map(item -> toOrderDetail(orders.getId(), item))
@@ -177,6 +185,11 @@ public class OrderServiceImpl implements OrderService {
                 throw new BusinessException("订单状态已变化，请刷新后重试");
             }
 
+            dishStockService.confirmLockedStock(
+                    id,
+                    aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
+                    getCurrentUserIdOrThrow());
+
             int paymentRows = paymentRecordMapper.updateStatusToSuccessById(
                     paymentRecord.getId(), payTime, PAYMENT_STATUS_PAYING, PAYMENT_STATUS_SUCCESS);
             if (paymentRows == 0) {
@@ -196,13 +209,19 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void cancel(Long id) {
-        executeTimestampTransition(
-                id,
-                OrderStatus.CANCELLED,
-                this::getOwnOrderOrThrow,
-                "只有待支付订单才能取消",
-                (orderId, oldStatus) -> ordersMapper.updateToCancelledById(
-                        orderId, LocalDateTime.now(), oldStatus.getCode(), OrderStatus.CANCELLED.getCode()));
+        executeWithOrderStatusLock(id, () -> {
+            Orders orders = getOwnOrderOrThrow(id);
+            OrderStatus oldStatus = requireTransition(orders, OrderStatus.CANCELLED, "只有待支付订单才能取消");
+            int rows = ordersMapper.updateToCancelledById(
+                    id, LocalDateTime.now(), oldStatus.getCode(), OrderStatus.CANCELLED.getCode());
+            if (rows == 0) {
+                throw new BusinessException("订单状态已变化，请刷新后重试");
+            }
+            dishStockService.releaseLockedStock(
+                    id,
+                    aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
+                    getCurrentUserIdOrThrow());
+        });
     }
 
     @Override
@@ -498,6 +517,20 @@ public class OrderServiceImpl implements OrderService {
         cartItem.setDishName(dish.getName());
         cartItem.setDishPrice(dish.getPrice());
         return cartItem;
+    }
+
+    private Map<Long, Integer> aggregateCartQuantities(List<ShoppingCart> cartItems) {
+        return cartItems.stream()
+                .collect(Collectors.groupingBy(
+                        ShoppingCart::getDishId,
+                        Collectors.summingInt(ShoppingCart::getQuantity)));
+    }
+
+    private Map<Long, Integer> aggregateOrderDetailQuantities(List<OrderDetail> details) {
+        return details.stream()
+                .collect(Collectors.groupingBy(
+                        OrderDetail::getDishId,
+                        Collectors.summingInt(OrderDetail::getQuantity)));
     }
 
     private OrderDetail toOrderDetail(Long orderId, ShoppingCart shoppingCart) {

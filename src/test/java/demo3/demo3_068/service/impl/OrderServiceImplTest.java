@@ -16,6 +16,9 @@ import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.common.RedisDistributedLock;
+import demo3.demo3_068.service.DishStockService;
+import demo3.demo3_068.vo.OrderPayVO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,12 +28,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -50,6 +57,10 @@ class OrderServiceImplTest {
     private DishMapper dishMapper;
     @Mock
     private PaymentRecordMapper paymentRecordMapper;
+    @Mock
+    private RedisDistributedLock redisDistributedLock;
+    @Mock
+    private DishStockService dishStockService;
 
     private OrderServiceImpl orderService;
 
@@ -62,7 +73,8 @@ class OrderServiceImplTest {
                 shoppingCartMapper,
                 dishMapper,
                 paymentRecordMapper,
-                null);
+                redisDistributedLock,
+                dishStockService);
         BaseContext.setCurrentUserId(7L);
     }
 
@@ -126,6 +138,7 @@ class OrderServiceImplTest {
         verify(orderDetailMapper).insertBatch(any());
         verify(shoppingCartMapper).deleteByUserId(7L);
         verify(orderIdempotencyMapper).markSucceeded(eq(55L), eq(101L), eq(OrderIdempotencyStatus.SUCCEEDED.getCode()), any());
+        verify(dishStockService).lockStock(101L, Map.of(1L, 2), 7L);
     }
 
     @Test
@@ -142,6 +155,7 @@ class OrderServiceImplTest {
         verify(ordersMapper, never()).insert(any());
         verify(orderDetailMapper, never()).insertBatch(any());
         verify(shoppingCartMapper, never()).deleteByUserId(any());
+        verify(dishStockService, never()).lockStock(any(), any(), any());
     }
 
     @Test
@@ -189,6 +203,132 @@ class OrderServiceImplTest {
         verify(ordersMapper, never()).insert(any());
     }
 
+    @Test
+    void firstSubmitAggregatesDuplicateDishItemsBeforeLockingStock() {
+        OrderSubmitDTO dto = submitDTO("宿舍1号楼");
+        when(orderIdempotencyMapper.selectByUserIdAndKey(7L, "submit-key")).thenReturn(null);
+        when(shoppingCartMapper.selectByUserId(7L)).thenReturn(List.of(
+                cartItem(1L, "10.00", 1),
+                cartItem(1L, "10.00", 2)));
+        when(dishMapper.selectById(1L)).thenReturn(dish(1L, "测试饭", "10.00"));
+        when(orderIdempotencyMapper.insert(any(OrderIdempotency.class))).thenAnswer(invocation -> {
+            OrderIdempotency idempotency = invocation.getArgument(0);
+            idempotency.setId(55L);
+            return 1;
+        });
+        when(ordersMapper.insert(any(Orders.class))).thenAnswer(invocation -> {
+            Orders orders = invocation.getArgument(0);
+            orders.setId(101L);
+            return 1;
+        });
+        when(orderDetailMapper.insertBatch(any())).thenReturn(1);
+        when(shoppingCartMapper.deleteByUserId(7L)).thenReturn(1);
+        when(orderIdempotencyMapper.markSucceeded(eq(55L), eq(101L), eq(OrderIdempotencyStatus.SUCCEEDED.getCode()), any()))
+                .thenReturn(1);
+
+        Long orderId = orderService.submit(dto, "submit-key");
+
+        assertThat(orderId).isEqualTo(101L);
+        verify(dishStockService).lockStock(101L, Map.of(1L, 3), 7L);
+    }
+
+    @Test
+    void stockLockFailureStopsOrderDetailsAndIdempotencySuccess() {
+        OrderSubmitDTO dto = submitDTO("宿舍1号楼");
+        when(orderIdempotencyMapper.selectByUserIdAndKey(7L, "submit-key")).thenReturn(null);
+        when(shoppingCartMapper.selectByUserId(7L)).thenReturn(List.of(cartItem(1L, "10.00", 2)));
+        when(dishMapper.selectById(1L)).thenReturn(dish(1L, "测试饭", "10.00"));
+        when(orderIdempotencyMapper.insert(any(OrderIdempotency.class))).thenAnswer(invocation -> {
+            OrderIdempotency idempotency = invocation.getArgument(0);
+            idempotency.setId(55L);
+            return 1;
+        });
+        when(ordersMapper.insert(any(Orders.class))).thenAnswer(invocation -> {
+            Orders orders = invocation.getArgument(0);
+            orders.setId(101L);
+            return 1;
+        });
+        doThrow(new BusinessException("商品库存不足"))
+                .when(dishStockService).lockStock(101L, Map.of(1L, 2), 7L);
+
+        assertThatThrownBy(() -> orderService.submit(dto, "submit-key"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("商品库存不足");
+        verify(orderDetailMapper, never()).insertBatch(any());
+        verify(shoppingCartMapper, never()).deleteByUserId(any());
+        verify(orderIdempotencyMapper, never()).markSucceeded(any(), any(), any(), any());
+    }
+
+    @Test
+    void payConfirmsLockedStockAfterStatusUpdateSucceeds() {
+        Orders orders = pendingOrder();
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(paymentRecordMapper.insert(any())).thenAnswer(invocation -> {
+            invocation.getArgument(0, demo3.demo3_068.entity.PaymentRecord.class).setId(88L);
+            return 1;
+        });
+        when(ordersMapper.updateToPaidById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.PAID.getCode())))
+                .thenReturn(1);
+        when(orderDetailMapper.selectByOrderId(101L)).thenReturn(List.of(
+                orderDetail(1L, "10.00", 1),
+                orderDetail(1L, "10.00", 2)));
+        when(paymentRecordMapper.updateStatusToSuccessById(eq(88L), any(), eq(1), eq(2))).thenReturn(1);
+
+        OrderPayVO result = orderService.pay(101L);
+
+        assertThat(result.getOrderId()).isEqualTo(101L);
+        verify(dishStockService).confirmLockedStock(101L, Map.of(1L, 3), 7L);
+    }
+
+    @Test
+    void duplicatePayDoesNotConfirmLockedStock() {
+        Orders orders = pendingOrder();
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(paymentRecordMapper.insert(any())).thenAnswer(invocation -> {
+            invocation.getArgument(0, demo3.demo3_068.entity.PaymentRecord.class).setId(88L);
+            return 1;
+        });
+        when(ordersMapper.updateToPaidById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.PAID.getCode())))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> orderService.pay(101L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("订单状态已变化，请刷新后重试");
+        verify(dishStockService, never()).confirmLockedStock(any(), any(), any());
+    }
+
+    @Test
+    void cancelReleasesLockedStockAfterStatusUpdateSucceeds() {
+        Orders orders = pendingOrder();
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(ordersMapper.updateToCancelledById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.CANCELLED.getCode())))
+                .thenReturn(1);
+        when(orderDetailMapper.selectByOrderId(101L)).thenReturn(List.of(
+                orderDetail(1L, "10.00", 1),
+                orderDetail(2L, "12.00", 2)));
+
+        orderService.cancel(101L);
+
+        verify(dishStockService).releaseLockedStock(101L, Map.of(1L, 1, 2L, 2), 7L);
+    }
+
+    @Test
+    void duplicateCancelDoesNotReleaseLockedStock() {
+        Orders orders = pendingOrder();
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(ordersMapper.updateToCancelledById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.CANCELLED.getCode())))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> orderService.cancel(101L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("订单状态已变化，请刷新后重试");
+        verify(dishStockService, never()).releaseLockedStock(any(), any(), any());
+    }
+
     private OrderSubmitDTO submitDTO(String remark) {
         OrderSubmitDTO dto = new OrderSubmitDTO();
         dto.setRemark(remark);
@@ -223,6 +363,16 @@ class OrderServiceImplTest {
         orderDetail.setQuantity(quantity);
         orderDetail.setAmount(new BigDecimal(dishPrice).multiply(BigDecimal.valueOf(quantity)));
         return orderDetail;
+    }
+
+    private Orders pendingOrder() {
+        Orders orders = new Orders();
+        orders.setId(101L);
+        orders.setNumber("202607080001");
+        orders.setUserId(7L);
+        orders.setStatus(OrderStatus.PENDING_PAYMENT.getCode());
+        orders.setAmount(new BigDecimal("30.00"));
+        return orders;
     }
 
     private OrderIdempotency existingIdempotency(String requestHash,

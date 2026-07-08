@@ -34,6 +34,19 @@ CREATE TABLE IF NOT EXISTS dish (
     KEY idx_dish_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS dish_stock (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    dish_id BIGINT NOT NULL,
+    available_stock INT NOT NULL DEFAULT 0,
+    locked_stock INT NOT NULL DEFAULT 0,
+    version INT NOT NULL DEFAULT 0,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_dish_stock_dish_id (dish_id),
+    CONSTRAINT chk_dish_stock_available_non_negative CHECK (available_stock >= 0),
+    CONSTRAINT chk_dish_stock_locked_non_negative CHECK (locked_stock >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS shopping_cart (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
@@ -72,6 +85,24 @@ CREATE TABLE IF NOT EXISTS order_detail (
     quantity INT NOT NULL,
     amount DECIMAL(10, 2) NOT NULL,
     KEY idx_order_detail_order_id (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS stock_record (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    dish_id BIGINT NOT NULL,
+    order_id BIGINT,
+    change_type VARCHAR(32) NOT NULL,
+    change_quantity INT NOT NULL,
+    available_before INT NOT NULL,
+    available_after INT NOT NULL,
+    locked_before INT NOT NULL,
+    locked_after INT NOT NULL,
+    operator_id BIGINT,
+    remark VARCHAR(255),
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_stock_record_dish_id (dish_id),
+    KEY idx_stock_record_order_id (order_id),
+    KEY idx_stock_record_create_time (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS order_idempotency (
