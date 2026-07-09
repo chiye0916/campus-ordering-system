@@ -97,7 +97,8 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserLoginVO login(UserLoginDTO userLoginDTO) {
         User user = userMapper.selectByUsername(userLoginDTO.getUsername());
-        if (user == null || !passwordEncoder.matches(userLoginDTO.getPassword(), user.getPassword())) {
+        if (user == null || Constants.SYSTEM_USER_ROLE.equals(user.getRole())
+                || !passwordEncoder.matches(userLoginDTO.getPassword(), user.getPassword())) {
             throw new BusinessException(401, "用户名或密码错误");
         }
 

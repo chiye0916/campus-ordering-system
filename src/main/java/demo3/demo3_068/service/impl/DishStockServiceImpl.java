@@ -103,6 +103,12 @@ public class DishStockServiceImpl implements DishStockService {
         operateOrderStock(orderId, dishQuantities, operatorId, StockChangeType.RELEASE, "取消订单释放库存");
     }
 
+    @Override
+    @Transactional
+    public void releaseLockedStock(Long orderId, Map<Long, Integer> dishQuantities, Long operatorId, String remark) {
+        operateOrderStock(orderId, dishQuantities, operatorId, StockChangeType.RELEASE, remark);
+    }
+
     private void operateOrderStock(Long orderId,
                                    Map<Long, Integer> dishQuantities,
                                    Long operatorId,

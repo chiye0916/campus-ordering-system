@@ -140,3 +140,30 @@ CREATE TABLE IF NOT EXISTS payment_record (
     KEY idx_payment_user_id (user_id),
     KEY idx_payment_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS order_timeout_outbox (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    order_id BIGINT NOT NULL,
+    message_id VARCHAR(64) NOT NULL,
+    payload TEXT NOT NULL,
+    expire_time DATETIME NOT NULL,
+    status TINYINT NOT NULL COMMENT '1:PENDING, 2:PUBLISHING, 3:SENT, 4:FAILED',
+    retry_count INT NOT NULL DEFAULT 0,
+    next_retry_time DATETIME NOT NULL,
+    publish_claim_time DATETIME,
+    sent_time DATETIME,
+    last_error VARCHAR(512),
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_order_timeout_outbox_order_id (order_id),
+    UNIQUE KEY uk_order_timeout_outbox_message_id (message_id),
+    KEY idx_order_timeout_outbox_due (status, next_retry_time, retry_count),
+    KEY idx_order_timeout_outbox_publish_claim_time (status, publish_claim_time),
+    KEY idx_order_timeout_outbox_expire_time (expire_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `user` (username, email, password, nickname, role)
+SELECT 'system_timeout', NULL, '12345', '订单超时系统', 'SYSTEM'
+WHERE NOT EXISTS (
+    SELECT 1 FROM `user` WHERE username = 'system_timeout'
+);

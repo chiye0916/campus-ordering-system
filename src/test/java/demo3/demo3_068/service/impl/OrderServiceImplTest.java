@@ -14,10 +14,12 @@ import demo3.demo3_068.mapper.OrderIdempotencyMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
+import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.common.RedisDistributedLock;
 import demo3.demo3_068.service.DishStockService;
+import demo3.demo3_068.service.OrderTimeoutOutboxService;
 import demo3.demo3_068.vo.OrderPayVO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,9 +60,13 @@ class OrderServiceImplTest {
     @Mock
     private PaymentRecordMapper paymentRecordMapper;
     @Mock
+    private UserMapper userMapper;
+    @Mock
     private RedisDistributedLock redisDistributedLock;
     @Mock
     private DishStockService dishStockService;
+    @Mock
+    private OrderTimeoutOutboxService orderTimeoutOutboxService;
 
     private OrderServiceImpl orderService;
 
@@ -73,8 +79,10 @@ class OrderServiceImplTest {
                 shoppingCartMapper,
                 dishMapper,
                 paymentRecordMapper,
+                userMapper,
                 redisDistributedLock,
-                dishStockService);
+                dishStockService,
+                orderTimeoutOutboxService);
         BaseContext.setCurrentUserId(7L);
     }
 
@@ -139,6 +147,7 @@ class OrderServiceImplTest {
         verify(shoppingCartMapper).deleteByUserId(7L);
         verify(orderIdempotencyMapper).markSucceeded(eq(55L), eq(101L), eq(OrderIdempotencyStatus.SUCCEEDED.getCode()), any());
         verify(dishStockService).lockStock(101L, Map.of(1L, 2), 7L);
+        verify(orderTimeoutOutboxService).createPendingForOrder(101L);
     }
 
     @Test
@@ -156,6 +165,7 @@ class OrderServiceImplTest {
         verify(orderDetailMapper, never()).insertBatch(any());
         verify(shoppingCartMapper, never()).deleteByUserId(any());
         verify(dishStockService, never()).lockStock(any(), any(), any());
+        verify(orderTimeoutOutboxService, never()).createPendingForOrder(any());
     }
 
     @Test
@@ -257,6 +267,7 @@ class OrderServiceImplTest {
         verify(orderDetailMapper, never()).insertBatch(any());
         verify(shoppingCartMapper, never()).deleteByUserId(any());
         verify(orderIdempotencyMapper, never()).markSucceeded(any(), any(), any(), any());
+        verify(orderTimeoutOutboxService, never()).createPendingForOrder(any());
     }
 
     @Test
@@ -327,6 +338,74 @@ class OrderServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("订单状态已变化，请刷新后重试");
         verify(dishStockService, never()).releaseLockedStock(any(), any(), any());
+    }
+
+    @Test
+    void timeoutCancelPendingOrderReleasesStockWithSystemOperator() {
+        Orders orders = pendingOrder();
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(ordersMapper.updateToCancelledById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.CANCELLED.getCode())))
+                .thenReturn(1);
+        when(userMapper.selectIdByUsername("system_timeout")).thenReturn(999L);
+        when(orderDetailMapper.selectByOrderId(101L)).thenReturn(List.of(
+                orderDetail(1L, "10.00", 1),
+                orderDetail(1L, "10.00", 2)));
+
+        orderService.timeoutCancel(101L, "message-1");
+
+        verify(dishStockService).releaseLockedStock(
+                101L,
+                Map.of(1L, 3),
+                999L,
+                "订单超时自动取消释放库存");
+    }
+
+    @Test
+    void timeoutCancelNonPendingOrderIsNoOp() {
+        Orders orders = pendingOrder();
+        orders.setStatus(OrderStatus.PAID.getCode());
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+
+        orderService.timeoutCancel(101L, "message-1");
+
+        verify(ordersMapper, never()).updateToCancelledById(any(), any(), any(), any());
+        verify(dishStockService, never()).releaseLockedStock(any(), any(), any(), any());
+    }
+
+    @Test
+    void timeoutCancelMissingOrderIsNoOp() {
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(null);
+
+        orderService.timeoutCancel(101L, "message-1");
+
+        verify(ordersMapper, never()).updateToCancelledById(any(), any(), any(), any());
+        verify(dishStockService, never()).releaseLockedStock(any(), any(), any(), any());
+    }
+
+    @Test
+    void timeoutCancelDoesNotReleaseStockWhenConditionalUpdateFails() {
+        Orders orders = pendingOrder();
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(ordersMapper.updateToCancelledById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.CANCELLED.getCode())))
+                .thenReturn(0);
+
+        orderService.timeoutCancel(101L, "message-1");
+
+        verify(dishStockService, never()).releaseLockedStock(any(), any(), any(), any());
+    }
+
+    @Test
+    void timeoutCancelLockFailureRemainsRetryable() {
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(false);
+
+        assertThatThrownBy(() -> orderService.timeoutCancel(101L, "message-1"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("订单处理中，请稍后重试");
+        verify(ordersMapper, never()).selectById(any());
     }
 
     private OrderSubmitDTO submitDTO(String remark) {
