@@ -20,10 +20,12 @@ import demo3.demo3_068.mapper.OrderIdempotencyMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
+import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderService;
+import demo3.demo3_068.service.OrderTimeoutOutboxService;
 import demo3.demo3_068.utils.OrderNumberUtil;
 import demo3.demo3_068.utils.PaymentTradeNoUtil;
 import demo3.demo3_068.vo.OrderDetailVO;
@@ -58,6 +60,7 @@ public class OrderServiceImpl implements OrderService {
     private static final int PAYMENT_STATUS_PAYING = 1;
     private static final int PAYMENT_STATUS_SUCCESS = 2;
     private static final String PAYMENT_CHANNEL_MOCK = "MOCK";
+    private static final String TIMEOUT_RELEASE_REMARK = "订单超时自动取消释放库存";
     private static final Duration ORDER_STATUS_LOCK_TTL = Duration.ofSeconds(30);
 
     private final OrdersMapper ordersMapper;
@@ -66,8 +69,10 @@ public class OrderServiceImpl implements OrderService {
     private final ShoppingCartMapper shoppingCartMapper;
     private final DishMapper dishMapper;
     private final PaymentRecordMapper paymentRecordMapper;
+    private final UserMapper userMapper;
     private final RedisDistributedLock redisDistributedLock;
     private final DishStockService dishStockService;
+    private final OrderTimeoutOutboxService orderTimeoutOutboxService;
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
                             OrderDetailMapper orderDetailMapper,
@@ -75,16 +80,20 @@ public class OrderServiceImpl implements OrderService {
                             ShoppingCartMapper shoppingCartMapper,
                             DishMapper dishMapper,
                             PaymentRecordMapper paymentRecordMapper,
+                            UserMapper userMapper,
                             RedisDistributedLock redisDistributedLock,
-                            DishStockService dishStockService) {
+                            DishStockService dishStockService,
+                            OrderTimeoutOutboxService orderTimeoutOutboxService) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.orderIdempotencyMapper = orderIdempotencyMapper;
         this.shoppingCartMapper = shoppingCartMapper;
         this.dishMapper = dishMapper;
         this.paymentRecordMapper = paymentRecordMapper;
+        this.userMapper = userMapper;
         this.redisDistributedLock = redisDistributedLock;
         this.dishStockService = dishStockService;
+        this.orderTimeoutOutboxService = orderTimeoutOutboxService;
     }
 
     @Override
@@ -137,6 +146,7 @@ public class OrderServiceImpl implements OrderService {
         orderDetailMapper.insertBatch(details);
 
         shoppingCartMapper.deleteByUserId(userId);
+        orderTimeoutOutboxService.createPendingForOrder(orders.getId());
         int rows = orderIdempotencyMapper.markSucceeded(
                 orderIdempotency.getId(),
                 orders.getId(),
@@ -271,6 +281,41 @@ public class OrderServiceImpl implements OrderService {
                 OrderStatus.REFUNDED,
                 this::getOrderOrThrow,
                 "只有模拟退款中的订单才能完成内部模拟退款");
+    }
+
+    @Override
+    @Transactional
+    public void timeoutCancel(Long id, String messageId) {
+        executeWithOrderStatusLock(id, () -> {
+            Orders orders = ordersMapper.selectById(id);
+            if (orders == null) {
+                return;
+            }
+
+            OrderStatus currentStatus = OrderStatus.fromCode(orders.getStatus());
+            if (currentStatus != OrderStatus.PENDING_PAYMENT) {
+                return;
+            }
+
+            int rows = ordersMapper.updateToCancelledById(
+                    id,
+                    LocalDateTime.now(),
+                    OrderStatus.PENDING_PAYMENT.getCode(),
+                    OrderStatus.CANCELLED.getCode());
+            if (rows == 0) {
+                return;
+            }
+
+            Long systemOperatorId = userMapper.selectIdByUsername(Constants.SYSTEM_TIMEOUT_USERNAME);
+            if (systemOperatorId == null) {
+                throw new BusinessException("订单超时系统用户不存在");
+            }
+            dishStockService.releaseLockedStock(
+                    id,
+                    aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
+                    systemOperatorId,
+                    TIMEOUT_RELEASE_REMARK);
+        });
     }
 
     private Orders getOwnOrderOrThrow(Long id) {

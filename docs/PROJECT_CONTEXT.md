@@ -58,11 +58,17 @@
 - 下单会先创建待支付订单获得 `order_id`，再按 dishId 聚合并升序锁库存、写 `LOCK` 流水；幂等重复返回原订单时不会重复锁库存
 - 支付待支付订单会在订单状态条件更新成功后确认锁定库存、写 `CONFIRM` 流水；重复支付不会重复扣锁定库存
 - 取消待支付订单会在订单状态条件更新成功后释放锁定库存、写 `RELEASE` 流水；重复取消不会重复释放库存
+- 已实现 RabbitMQ TTL + DLX 订单超时取消：下单事务内写 `order_timeout_outbox`，定时 publisher claim 后发布，RabbitMQ confirm 后标记 `SENT`
+- 超时取消 consumer 只取消仍为待支付的订单；非待支付、已取消、缺失订单作为幂等 no-op
+- 超时取消复用 Redis 订单状态锁和数据库 `where status = PENDING_PAYMENT` 条件更新，状态更新成功后才释放库存
+- 自动超时释放库存会写 `RELEASE` 流水，operator 使用 `system_timeout` 系统审计用户，remark 为“订单超时自动取消释放库存”
+- `SYSTEM` 角色不会被当作普通管理员，且 `system_timeout` 不能通过正常登录 API 登录
 - 已整理接口联调文档：`docs/API_TEST.md`
 
 正在进行：
 
-- 当前 change：`add-dish-stock-with-records` 已进入实现和验证阶段；下一步按 `docs/API_TEST.md` 做库存与订单完整回归联调
+- 当前没有 active change；`add-rabbitmq-order-timeout-cancel` 已实现、联调通过、同步主 specs 并归档
+- 下一步可进入后续支付回调幂等 change
 
 ## 重要约定
 
@@ -86,6 +92,9 @@
 - 金额计算必须使用 `BigDecimal`，不能使用 `double`。
 - SQL 继续使用 MyBatis XML。
 - 新功能要小步实现，保持已有功能不破坏，每阶段运行测试或说明验证方式。
+- 订单超时取消使用 RabbitMQ TTL + DLX，不使用 delayed-message 插件。
+- 订单超时消息通过 `order_timeout_outbox` 提供 at-least-once 投递语义，不承诺 exactly-once；consumer 必须依靠 orderId、订单状态和条件更新保持幂等。
+- RabbitMQ TTL 从 publisher 成功发布后开始计算；RabbitMQ 或 publisher 不可用时，实际取消可能晚于 `expire_time`。
 
 ## 数据库信息
 
@@ -104,6 +113,7 @@
 - `order_idempotency`：下单幂等表，唯一索引 `(user_id, idempotency_key)`，状态 `1` 处理中、`2` 已成功、`3` 已失败
 - `dish_stock`：库存现状表，`dish_id` 唯一，记录 `available_stock`、`locked_stock`、`version`
 - `stock_record`：库存流水表，记录 SET/LOCK/CONFIRM/RELEASE 的 before/after、订单、操作人和备注
+- `order_timeout_outbox`：订单超时消息 outbox，记录 orderId/messageId/payload/expireTime/status/retry/claim/sent/lastError
 
 订单状态：
 
@@ -204,6 +214,15 @@
 - `src/main/resources/mapper/DishStockMapper.xml`：库存行锁读取与条件更新 SQL
 - `src/main/java/demo3/demo3_068/mapper/StockRecordMapper.java`：库存流水 Mapper 接口
 - `src/main/resources/mapper/StockRecordMapper.xml`：库存流水 SQL
+- `src/main/java/demo3/demo3_068/config/RabbitMqConfig.java`：RabbitMQ TTL/DLX、队列绑定、listener retry、RabbitTemplate 配置
+- `src/main/java/demo3/demo3_068/config/OrderTimeoutProperties.java`：订单超时、outbox publisher、listener retry 配置属性
+- `src/main/java/demo3/demo3_068/entity/OrderTimeoutOutbox.java`：订单超时 outbox 实体
+- `src/main/java/demo3/demo3_068/model/OrderTimeoutOutboxStatus.java`：订单超时 outbox 状态枚举
+- `src/main/java/demo3/demo3_068/mapper/OrderTimeoutOutboxMapper.java`：订单超时 outbox Mapper 接口
+- `src/main/resources/mapper/OrderTimeoutOutboxMapper.xml`：订单超时 outbox SQL
+- `src/main/java/demo3/demo3_068/service/impl/OrderTimeoutOutboxServiceImpl.java`：下单事务内创建 timeout outbox
+- `src/main/java/demo3/demo3_068/service/impl/OrderTimeoutOutboxPublisher.java`：定时扫描、claim、发布、confirm、失败重试、stale 恢复
+- `src/main/java/demo3/demo3_068/service/impl/OrderTimeoutCancelListener.java`：RabbitMQ 超时取消消费者
 - `docs/API_TEST.md`：接口联调命令和数据库验证 SQL
 
 计划创建：
@@ -251,9 +270,8 @@ find src -maxdepth 4 -type f | sort
 
 ## 下一步计划
 
-1. 按 `docs/API_TEST.md` 从登录、商品、库存初始化、下单、支付、取消完整跑一遍，重点验证库存 SET/LOCK/CONFIRM/RELEASE 流水。
-2. 后续 RabbitMQ 超时取消可以复用当前 `releaseLockedStock` 语义：只对仍为待支付且状态条件更新成功的订单释放锁定库存。
-3. 后续可进入前端页面或继续补更细的商家/平台权限。
+1. 后续进入支付回调幂等，重点处理“支付成功和超时取消并发”下的外部回调重复/乱序问题。
+2. 可继续补更细的商家/平台权限。
 
 ## 待用户补充
 

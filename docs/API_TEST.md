@@ -17,6 +17,24 @@ mysql8
 redis7
 ```
 
+第四阶段订单超时取消还需要 RabbitMQ。若本地还没有启动，可使用：
+
+```bash
+docker run -d --name rabbitmq-demo3 \
+  -p 5672:5672 -p 15672:15672 \
+  -e RABBITMQ_DEFAULT_USER=demo3 \
+  -e RABBITMQ_DEFAULT_PASS=12345 \
+  rabbitmq:3-management
+```
+
+管理后台：
+
+```text
+http://127.0.0.1:15672
+username: demo3
+password: 12345
+```
+
 启动项目：
 
 ```bash
@@ -39,6 +57,37 @@ docker exec -it mysql8 mysql -u chiye -p1234 demo3_db
 alter table user add column email varchar(128) null after username;
 alter table user add unique key uk_user_email (email);
 exit;
+```
+
+如果你的数据库是在订单超时取消功能之前创建的，需要补 `order_timeout_outbox` 表，并初始化系统审计用户。也可以直接参考 `sql/schema.sql` 执行完整建表脚本。
+
+```sql
+CREATE TABLE IF NOT EXISTS order_timeout_outbox (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    order_id BIGINT NOT NULL,
+    message_id VARCHAR(64) NOT NULL,
+    payload TEXT NOT NULL,
+    expire_time DATETIME NOT NULL,
+    status TINYINT NOT NULL COMMENT '1:PENDING, 2:PUBLISHING, 3:SENT, 4:FAILED',
+    retry_count INT NOT NULL DEFAULT 0,
+    next_retry_time DATETIME NOT NULL,
+    publish_claim_time DATETIME,
+    sent_time DATETIME,
+    last_error VARCHAR(512),
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_order_timeout_outbox_order_id (order_id),
+    UNIQUE KEY uk_order_timeout_outbox_message_id (message_id),
+    KEY idx_order_timeout_outbox_due (status, next_retry_time, retry_count),
+    KEY idx_order_timeout_outbox_publish_claim_time (status, publish_claim_time),
+    KEY idx_order_timeout_outbox_expire_time (expire_time)
+);
+
+INSERT INTO `user` (username, email, password, nickname, role)
+SELECT 'system_timeout', NULL, '12345', '订单超时系统', 'SYSTEM'
+WHERE NOT EXISTS (
+    SELECT 1 FROM `user` WHERE username = 'system_timeout'
+);
 ```
 
 ## 1. 准备普通用户和管理员
@@ -1130,6 +1179,15 @@ from order_idempotency
 order by id;
 ```
 
+查看订单超时 outbox：
+
+```sql
+select id, order_id, message_id, expire_time, status, retry_count,
+       next_retry_time, publish_claim_time, sent_time, last_error, create_time, update_time
+from order_timeout_outbox
+order by id desc;
+```
+
 状态说明：
 
 ```text
@@ -1138,7 +1196,101 @@ order by id;
 3 FAILED / 已失败
 ```
 
-## 9. 状态说明
+订单超时 outbox 状态说明：
+
+```text
+1 PENDING / 待发布
+2 PUBLISHING / 已被发布器 claim
+3 SENT / RabbitMQ 已确认接收
+4 FAILED / 发布失败，等待重试或达到最大重试次数后人工检查
+```
+
+## 9. 订单超时自动取消验证
+
+默认超时时间是 15 分钟：
+
+```properties
+order.timeout.delay=15m
+```
+
+本地验证可以临时改成 30 秒：
+
+```properties
+order.timeout.delay=30s
+```
+
+注意：RabbitMQ 队列参数中的 `x-message-ttl` 在队列声明时确定。如果你已经用 15 分钟启动过应用，再改成 30 秒，可能需要在 RabbitMQ 管理后台删除下面两个队列，让应用重启后重新声明：
+
+```text
+order.timeout.delay.queue
+order.timeout.cancel.queue
+```
+
+验证步骤：
+
+1. 确认 RabbitMQ、MySQL、Redis 都已启动。
+2. 启动应用。
+3. 加购物车并提交订单，但不要支付。
+4. 立即查看 `order_timeout_outbox`，应看到一条该订单的记录，状态最终变为 `3 SENT`。
+5. 等待超时时间后查看订单、库存和库存流水。
+
+SQL 检查：
+
+```sql
+select id, order_id, message_id, expire_time, status, retry_count, sent_time, last_error
+from order_timeout_outbox
+where order_id = 你的订单ID;
+
+select id, status, cancel_time
+from orders
+where id = 你的订单ID;
+
+select dish_id, available_stock, locked_stock, version
+from dish_stock
+where dish_id = 你的商品ID;
+
+select sr.id, sr.dish_id, sr.order_id, sr.change_type, sr.change_quantity,
+       sr.operator_id, u.username, sr.remark
+from stock_record sr
+left join `user` u on u.id = sr.operator_id
+where sr.order_id = 你的订单ID
+order by sr.id;
+```
+
+期望结果：
+
+```text
+order_timeout_outbox.status=3
+orders.status=4，cancel_time 不为空
+dish_stock.locked_stock 减少，下单锁定的库存回到 available_stock
+stock_record 新增 RELEASE
+RELEASE.operator_id 对应 user.username=system_timeout
+RELEASE.remark=订单超时自动取消释放库存
+```
+
+RabbitMQ 队列检查：
+
+```text
+Exchanges:
+- order.timeout.delay.exchange
+- order.timeout.dead.exchange
+
+Queues:
+- order.timeout.delay.queue
+- order.timeout.cancel.queue
+```
+
+`order.timeout.delay.queue` 应绑定到 delay exchange，并配置：
+
+```text
+x-message-ttl = 当前 order.timeout.delay 对应毫秒数
+x-dead-letter-exchange = order.timeout.dead.exchange
+x-dead-letter-routing-key = order.timeout.cancel
+```
+
+说明：TTL 从 outbox publisher 成功发布到 RabbitMQ 后开始计算，不是从订单创建瞬间开始。如果 RabbitMQ 或 publisher 暂时不可用，实际取消时间可能晚于 `expire_time`；本阶段通过 outbox 保证发送意图可重试，不做额外订单兜底扫描。
+
+## 10. 状态说明
 
 订单状态：
 

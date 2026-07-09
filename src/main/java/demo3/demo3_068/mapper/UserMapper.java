@@ -11,5 +11,7 @@ public interface UserMapper {
 
     User selectById(@Param("id") Long id);
 
+    Long selectIdByUsername(@Param("username") String username);
+
     int insert(User user);
 }

@@ -33,6 +33,12 @@
         where id = #{id}
     </select>
 
+    <select id="selectIdByUsername" resultType="long">
+        select id
+        from `user`
+        where username = #{username}
+    </select>
+
     <insert id="insert" parameterType="demo3.demo3_068.entity.User"
             useGeneratedKeys="true" keyProperty="id">
         insert into `user` (username, email, password, nickname, role)

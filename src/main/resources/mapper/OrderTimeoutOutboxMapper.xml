@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.OrderTimeoutOutboxMapper">
+
+    <resultMap id="OrderTimeoutOutboxResultMap" type="demo3.demo3_068.entity.OrderTimeoutOutbox">
+        <id column="id" property="id"/>
+        <result column="order_id" property="orderId"/>
+        <result column="message_id" property="messageId"/>
+        <result column="payload" property="payload"/>
+        <result column="expire_time" property="expireTime"/>
+        <result column="status" property="status"/>
+        <result column="retry_count" property="retryCount"/>
+        <result column="next_retry_time" property="nextRetryTime"/>
+        <result column="publish_claim_time" property="publishClaimTime"/>
+        <result column="sent_time" property="sentTime"/>
+        <result column="last_error" property="lastError"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <sql id="BaseColumns">
+        id, order_id, message_id, payload, expire_time, status, retry_count, next_retry_time,
+        publish_claim_time, sent_time, last_error, create_time, update_time
+    </sql>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.OrderTimeoutOutbox"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into order_timeout_outbox (
+            order_id, message_id, payload, expire_time, status, retry_count, next_retry_time,
+            publish_claim_time, sent_time, last_error, create_time, update_time
+        )
+        values (
+            #{orderId}, #{messageId}, #{payload}, #{expireTime}, #{status}, #{retryCount}, #{nextRetryTime},
+            #{publishClaimTime}, #{sentTime}, #{lastError}, #{createTime}, #{updateTime}
+        )
+    </insert>
+
+    <select id="selectByOrderId" resultMap="OrderTimeoutOutboxResultMap">
+        select <include refid="BaseColumns"/>
+        from order_timeout_outbox
+        where order_id = #{orderId}
+    </select>
+
+    <select id="selectDueRows" resultMap="OrderTimeoutOutboxResultMap">
+        select <include refid="BaseColumns"/>
+        from order_timeout_outbox
+        where status in (#{pendingStatus}, #{failedStatus})
+          and next_retry_time &lt;= #{now}
+          and retry_count &lt; #{maxRetryCount}
+        order by next_retry_time asc, id asc
+        limit #{limit}
+    </select>
+
+    <update id="claimForPublishing">
+        update order_timeout_outbox
+        set status = #{publishingStatus},
+            publish_claim_time = #{now},
+            update_time = #{now}
+        where id = #{id}
+          and status in (#{pendingStatus}, #{failedStatus})
+          and next_retry_time &lt;= #{now}
+          and retry_count &lt; #{maxRetryCount}
+    </update>
+
+    <update id="markSent">
+        update order_timeout_outbox
+        set status = #{sentStatus},
+            sent_time = #{now},
+            last_error = null,
+            update_time = #{now}
+        where id = #{id}
+          and status = #{publishingStatus}
+    </update>
+
+    <update id="markPublishFailed">
+        update order_timeout_outbox
+        set status = #{failedStatus},
+            retry_count = retry_count + 1,
+            next_retry_time = #{nextRetryTime},
+            last_error = #{lastError},
+            update_time = #{now}
+        where id = #{id}
+          and status = #{publishingStatus}
+    </update>
+
+    <update id="recoverStalePublishing">
+        update order_timeout_outbox
+        set status = #{failedStatus},
+            retry_count = retry_count + 1,
+            next_retry_time = #{nextRetryTime},
+            last_error = #{lastError},
+            update_time = #{now}
+        where status = #{publishingStatus}
+          and publish_claim_time &lt;= #{claimDeadline}
+          and retry_count &lt; #{maxRetryCount}
+    </update>
+</mapper>

@@ -16,4 +16,6 @@ public interface DishStockService {
     void confirmLockedStock(Long orderId, Map<Long, Integer> dishQuantities, Long operatorId);
 
     void releaseLockedStock(Long orderId, Map<Long, Integer> dishQuantities, Long operatorId);
+
+    void releaseLockedStock(Long orderId, Map<Long, Integer> dishQuantities, Long operatorId, String remark);
 }

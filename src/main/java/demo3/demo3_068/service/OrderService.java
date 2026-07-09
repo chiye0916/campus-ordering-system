@@ -28,4 +28,6 @@ public interface OrderService {
     void startRefund(Long id);
 
     void completeRefund(Long id);
+
+    void timeoutCancel(Long id, String messageId);
 }
