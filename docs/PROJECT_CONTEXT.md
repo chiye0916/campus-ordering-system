@@ -45,7 +45,8 @@
 - 已实现分类模块基础 CRUD：新增分类、查询分类列表、修改分类、删除分类
 - 删除分类时已预留商品引用检查：`DishMapper.countByCategoryId`
 - 已实现商品模块基础接口：新增商品、分页查询、按分类查询、修改商品、上下架商品
-- `/dish/list` 已接入 Redis 缓存，商品新增/修改/上下架后会删除对应分类商品列表缓存
+- `/dish/list` 已接入增强版 Redis Cache Aside 缓存：按分类 key 缓存，非空列表 TTL 默认 30 分钟，空列表 JSON `[]` TTL 默认 5 分钟，Redis 读写失败回退数据库，损坏 JSON 会删除后回源并重写
+- 商品新增、修改、上下架后会通过 `DishListCacheService` 删除对应分类商品列表缓存；修改商品分类会删除旧分类和新分类缓存
 - 已实现购物车模块：加入购物车、修改数量、查看购物车、清空购物车
 - 购物车使用 `BaseContext` 获取当前用户 ID，前端不传 `userId`
 - 已实现订单模块：提交订单、订单详情、订单分页、支付、取消、接单、开始配送、完成订单、管理员内部模拟退款
@@ -71,9 +72,9 @@
 
 正在进行：
 
-- active change：`add-payment-callback-idempotency`
-- 已实现两步模拟支付、支付回调幂等、支付失败重试、取消关闭支付中流水、相关单元测试和联调文档更新
-- 本 change 还未归档
+- active change：`enhance-redis-dish-cache`
+- 正在增强 `/dish/list` Redis 缓存的 TTL、空列表缓存、Redis 故障回退、损坏缓存恢复、变更失效和单元测试覆盖
+- 前一个 `add-payment-callback-idempotency` change 的实现内容已进入当前代码上下文，不再作为本文档的 active change
 
 ## 重要约定
 
@@ -103,6 +104,9 @@
 - 模拟支付是两步流程：用户调用 `PUT /order/{id}/pay` 发起或复用支付流水；模拟第三方调用 `POST /payment/mock/callback` 通知 `SUCCESS` 或 `FAILED`。
 - 支付回调 `process_status` 含义：`1 PROCESSING` 处理中、`2 PROCESSED` 已完成业务处理、`3 DUPLICATE` 新回调号但业务结果已成功、`4 FAILED` 回调校验失败、`5 IGNORED` 业务状态不允许执行。
 - `payStatus=FAILED` 与 `process_status=FAILED` 不是同一概念；失败支付回调被成功接收并把支付流水改为失败时，回调记录可以是 `process_status=PROCESSED`。
+- `/dish/list` 保持先校验分类存在，再读分类维度缓存；缺失分类继续返回“分类不存在”，且不会读写商品列表缓存。
+- 商品列表缓存是加速层，不是数据源。Redis get/set/delete 失败只记录日志并继续业务；删除失败可能导致旧列表短暂可见，靠 TTL 最终清理。
+- 管理员库存 SET/查询不删除 `/dish/list` 缓存，因为当前 `DishVO` 列表响应不包含库存。
 
 ## 数据库信息
 
@@ -157,7 +161,7 @@
 
 - `POST /dish`：新增商品
 - `GET /dish/page`：分页查询商品
-- `GET /dish/list`：根据分类查询商品，计划使用 Redis 缓存
+- `GET /dish/list`：根据分类查询上架商品，使用 Redis 分类列表缓存
 - `PUT /dish/{id}`：修改商品
 - `PUT /dish/{id}/status`：商品上下架
 - `GET /dish/{id}/stock`：管理员查询商品库存
@@ -209,7 +213,9 @@
 - `src/main/java/demo3/demo3_068/mapper/DishMapper.java`：当前仅提供分类删除前的商品数量检查
 - `src/main/resources/mapper/DishMapper.xml`：商品表 SQL
 - `src/main/java/demo3/demo3_068/controller/DishController.java`：商品接口入口
-- `src/main/java/demo3/demo3_068/service/impl/DishServiceImpl.java`：商品分类校验、查重、分页、缓存逻辑
+- `src/main/java/demo3/demo3_068/service/impl/DishServiceImpl.java`：商品分类校验、查重、分页、列表缓存编排
+- `src/main/java/demo3/demo3_068/service/DishListCacheService.java`：`/dish/list` Redis key、JSON、TTL、故障回退、损坏缓存恢复和删除封装
+- `src/main/java/demo3/demo3_068/config/DishCacheProperties.java`：商品列表缓存 TTL 配置，默认 `listTtl=30m`、`emptyListTtl=5m`
 - `src/main/java/demo3/demo3_068/controller/CartController.java`：购物车接口入口
 - `src/main/java/demo3/demo3_068/service/impl/CartServiceImpl.java`：购物车用户隔离、商品上架校验、数量累加、金额计算
 - `src/main/java/demo3/demo3_068/mapper/ShoppingCartMapper.java`：购物车 Mapper 接口
