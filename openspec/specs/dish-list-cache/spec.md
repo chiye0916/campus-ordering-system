@@ -1,7 +1,7 @@
 # dish-list-cache Specification
 
 ## Purpose
-TBD - created by archiving change enhance-redis-dish-cache. Update Purpose after archive.
+Define the `/dish/list` Redis cache behavior, including category-scoped cache keys, cache hit and miss semantics, empty-list caching, failure fallback, corrupted-cache recovery, mutation invalidation, and TTL requirements.
 ## Requirements
 ### Requirement: Dish List Cache Uses Category Key
 The system SHALL cache `/dish/list` results by category using a stable Redis key derived from the category ID.
@@ -167,4 +167,3 @@ The system SHALL encapsulate dish-list cache operations outside of `DishServiceI
 - **WHEN** `DishServiceImpl` lists, creates, updates, or changes status for dishes
 - **THEN** key construction, Redis get/set/delete calls, TTL selection, JSON serialization, JSON deserialization, and cache failure logging MUST be handled by a dedicated dish-list cache component
 - **AND** `DishServiceImpl` MUST remain responsible for category validation, dish database queries, and dish mutation business rules
-
