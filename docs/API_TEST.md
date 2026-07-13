@@ -4,6 +4,20 @@
 
 ## 0. 前置条件
 
+测试命令分两层：
+
+```bash
+./mvnw test
+```
+
+默认单元测试只运行普通 `*Test`，不启动 Testcontainers，也不要求 Docker 可用。
+
+```bash
+./mvnw verify -Pintegration-test
+```
+
+集成回归测试显式运行 `*IT`，会通过 Testcontainers 启动 MySQL、Redis 和轻量 RabbitMQ 测试容器，因此需要 Docker。当前集成套件覆盖 `/dish/list` 缓存、下单幂等/库存锁定、支付回调幂等/库存确认三条关键链路；RabbitMQ 在本阶段只用于应用上下文和配置连通性，不等待 TTL/DLX 超时取消链路。
+
 确认 MySQL、Redis 容器正在运行：
 
 ```bash

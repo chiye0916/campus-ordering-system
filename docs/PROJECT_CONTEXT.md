@@ -68,13 +68,15 @@
 - 超时取消复用 Redis 订单状态锁和数据库 `where status = PENDING_PAYMENT` 条件更新，状态更新成功后才释放库存
 - 自动超时释放库存会写 `RELEASE` 流水，operator 使用 `system_timeout` 系统审计用户，remark 为“订单超时自动取消释放库存”
 - `SYSTEM` 角色不会被当作普通管理员，且 `system_timeout` 不能通过正常登录 API 登录
+- 已新增 Testcontainers 集成回归套件基础：`./mvnw test` 继续只跑快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 通过 Failsafe 运行 `*IT`，使用容器 MySQL、Redis（`GenericContainer` + `redis:7-alpine`）和轻量 RabbitMQ 上下文配置
+- 集成回归套件第一批覆盖三条关键链路：`/dish/list` Redis 缓存、下单幂等与库存锁定、支付回调幂等与库存确认；RabbitMQ 超时 TTL/DLX/监听重试/自动取消释放库存不在本阶段集成测试范围
 - 已整理接口联调文档：`docs/API_TEST.md`
 
 正在进行：
 
-- active change：`enhance-redis-dish-cache`
-- 正在增强 `/dish/list` Redis 缓存的 TTL、空列表缓存、Redis 故障回退、损坏缓存恢复、变更失效和单元测试覆盖
-- 前一个 `add-payment-callback-idempotency` change 的实现内容已进入当前代码上下文，不再作为本文档的 active change
+- active change：`add-testcontainers-regression-suite`
+- 正在验证 Testcontainers 回归测试套件：默认 `./mvnw test` 继续运行快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 显式运行 MySQL/Redis/RabbitMQ 容器支撑的 `*IT` 集成测试
+- 前一个 `enhance-redis-dish-cache` change 的实现内容已进入当前代码上下文，不再作为本文档的 active change
 
 ## 重要约定
 
@@ -98,6 +100,7 @@
 - 金额计算必须使用 `BigDecimal`，不能使用 `double`。
 - SQL 继续使用 MyBatis XML。
 - 新功能要小步实现，保持已有功能不破坏，每阶段运行测试或说明验证方式。
+- 测试分层：`./mvnw test` 是快速单元测试，不依赖 Docker；`./mvnw verify -Pintegration-test` 才运行 Testcontainers 集成回归测试并需要 Docker。
 - 订单超时取消使用 RabbitMQ TTL + DLX，不使用 delayed-message 插件。
 - 订单超时消息通过 `order_timeout_outbox` 提供 at-least-once 投递语义，不承诺 exactly-once；consumer 必须依靠 orderId、订单状态和条件更新保持幂等。
 - RabbitMQ TTL 从 publisher 成功发布后开始计算；RabbitMQ 或 publisher 不可用时，实际取消可能晚于 `expire_time`。
