@@ -352,6 +352,8 @@ curl "$BASE_URL/dish/list?categoryId=$CATEGORY_ID" \
 docker exec -it redis7 redis-cli get "dish:list:category:$CATEGORY_ID"
 ```
 
+缓存说明：`/dish/list` 按 `dish:list:category:{categoryId}` 做 Cache Aside 缓存；非空列表默认 TTL 为 30 分钟，已有分类但没有上架商品时缓存 JSON `[]`，默认 TTL 为 5 分钟。Redis 读取或写入失败时接口会回退数据库结果，不因缓存失败报错；缓存 JSON 损坏时会尝试删除坏 key，再查数据库并重写缓存。新增、修改、上下架商品会删除受影响分类的列表缓存；修改分类时会同时删除旧分类和新分类缓存。管理员库存设置/查询不会删除 `/dish/list` 缓存，因为当前 `DishVO` 列表不包含库存字段。若缓存删除失败，数据库修改仍会成功，旧列表最多保留到 TTL 过期，属于 Cache Aside 的最终一致性取舍。
+
 修改商品价格：
 
 ```bash
