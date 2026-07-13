@@ -36,12 +36,53 @@
         )
     </insert>
 
+    <select id="selectByTradeNo" resultMap="PaymentRecordResultMap">
+        select id, order_id, order_number, user_id, amount, pay_channel, trade_no,
+               third_trade_no, status, request_time, success_time, callback_time,
+               failure_reason, create_time, update_time
+        from payment_record
+        where trade_no = #{tradeNo}
+    </select>
+
+    <select id="selectLatestMockByOrderId" resultMap="PaymentRecordResultMap">
+        select id, order_id, order_number, user_id, amount, pay_channel, trade_no,
+               third_trade_no, status, request_time, success_time, callback_time,
+               failure_reason, create_time, update_time
+        from payment_record
+        where order_id = #{orderId}
+          and pay_channel = #{payChannel}
+        order by id desc
+        limit 1
+    </select>
+
     <update id="updateStatusToSuccessById">
         update payment_record
         set status = #{newStatus},
             success_time = #{successTime},
+            callback_time = #{callbackTime},
+            third_trade_no = #{thirdTradeNo},
             update_time = #{successTime}
         where id = #{id}
+          and status = #{oldStatus}
+    </update>
+
+    <update id="updateStatusToFailedById">
+        update payment_record
+        set status = #{newStatus},
+            callback_time = #{callbackTime},
+            third_trade_no = #{thirdTradeNo},
+            failure_reason = #{failureReason},
+            update_time = #{callbackTime}
+        where id = #{id}
+          and status = #{oldStatus}
+    </update>
+
+    <update id="closeCurrentPayingMockByOrderId">
+        update payment_record
+        set status = #{newStatus},
+            update_time = #{updateTime}
+        where order_id = #{orderId}
+          and pay_channel = #{payChannel}
           and status = #{oldStatus}
     </update>
 </mapper>

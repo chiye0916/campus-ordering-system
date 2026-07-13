@@ -141,6 +141,27 @@ CREATE TABLE IF NOT EXISTS payment_record (
     KEY idx_payment_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS payment_callback_record (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    payment_record_id BIGINT,
+    order_id BIGINT,
+    trade_no VARCHAR(64) NOT NULL,
+    callback_no VARCHAR(64) NOT NULL,
+    third_trade_no VARCHAR(128),
+    pay_status VARCHAR(32) NOT NULL,
+    amount DECIMAL(10, 2) NOT NULL,
+    callback_time DATETIME NOT NULL,
+    process_status TINYINT NOT NULL COMMENT '1:PROCESSING, 2:PROCESSED, 3:DUPLICATE, 4:FAILED, 5:IGNORED',
+    failure_reason VARCHAR(255),
+    raw_payload TEXT,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_payment_callback_no (callback_no),
+    KEY idx_payment_callback_trade_no (trade_no),
+    KEY idx_payment_callback_payment_record_id (payment_record_id),
+    KEY idx_payment_callback_order_id (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS order_timeout_outbox (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     order_id BIGINT NOT NULL,

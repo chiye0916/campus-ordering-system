@@ -52,11 +52,15 @@
 - 下单使用 `@Transactional`，保证订单主表、订单明细、购物车清空同时成功或回滚
 - `POST /order/submit` 已加入 MySQL 下单幂等：客户端必须传 `Idempotency-Key`，成功仍返回 `Result<Long>` 的订单 ID
 - 已新增 `order_idempotency` 表，用 `(user_id, idempotency_key)` 唯一约束记录下单幂等状态
-- 已补充订单支付接口：`PUT /order/{id}/pay`
+- 已补充订单支付发起接口：`PUT /order/{id}/pay`
 - 已新增库存模块：`dish_stock` 保存可用/锁定库存，`stock_record` 保存 SET/LOCK/CONFIRM/RELEASE 库存流水
 - 已新增管理员库存接口：`GET /dish/{id}/stock`、`PUT /dish/{id}/stock`，设置字段为 `availableStock`
 - 下单会先创建待支付订单获得 `order_id`，再按 dishId 聚合并升序锁库存、写 `LOCK` 流水；幂等重复返回原订单时不会重复锁库存
-- 支付待支付订单会在订单状态条件更新成功后确认锁定库存、写 `CONFIRM` 流水；重复支付不会重复扣锁定库存
+- `PUT /order/{id}/pay` 只创建或复用 `MOCK`、`PAYING` 支付流水，返回 `tradeNo`，不更新订单为已支付，也不确认库存
+- 已新增 `POST /payment/mock/callback` 模拟第三方支付回调接口；成功回调才会把订单从待支付改为已支付并确认锁定库存、写 `CONFIRM` 流水
+- 已新增 `payment_callback_record` 表，以 `callback_no` 唯一约束实现回调请求幂等，记录未知流水、金额不匹配、失败支付、重复成功、终态 no-op 和超时后迟到回调
+- 支付回调使用 `tradeNo` 匹配 `payment_record`，使用 `BigDecimal.compareTo` 校验金额，`SUCCESS/FAILED/CLOSED` 支付流水为终态，后续回调不能反转支付状态
+- 手工取消和超时取消待支付订单成功后，会在同一事务内关闭当前 `MOCK`、`PAYING` 支付流水
 - 取消待支付订单会在订单状态条件更新成功后释放锁定库存、写 `RELEASE` 流水；重复取消不会重复释放库存
 - 已实现 RabbitMQ TTL + DLX 订单超时取消：下单事务内写 `order_timeout_outbox`，定时 publisher claim 后发布，RabbitMQ confirm 后标记 `SENT`
 - 超时取消 consumer 只取消仍为待支付的订单；非待支付、已取消、缺失订单作为幂等 no-op
@@ -67,8 +71,9 @@
 
 正在进行：
 
-- 当前没有 active change；`add-rabbitmq-order-timeout-cancel` 已实现、联调通过、同步主 specs 并归档
-- 下一步可进入后续支付回调幂等 change
+- active change：`add-payment-callback-idempotency`
+- 已实现两步模拟支付、支付回调幂等、支付失败重试、取消关闭支付中流水、相关单元测试和联调文档更新
+- 本 change 还未归档
 
 ## 重要约定
 
@@ -82,7 +87,7 @@
 - 当前用户 ID 必须由后端从 JWT 解析并放入 `BaseContext`，不能让前端传。
 - 请求结束必须清理 `ThreadLocal`，避免线程复用导致用户串号。
 - 下单必须使用 `@Transactional`。
-- 下单幂等只覆盖 `POST /order/submit`，不扩展到库存、RabbitMQ、支付回调。
+- 下单幂等只覆盖 `POST /order/submit`，支付回调幂等由 `payment_callback_record.callback_no` 单独负责。
 - 下单缺少或空白 `Idempotency-Key` 返回 `code=400`；同用户同 key 同请求成功重试返回原 orderId；同 key 不同请求或处理中返回 `code=409`。
 - 下单 `request_hash` 基于 `userId`、`remark`、当前购物车内容按 `dishId` 排序后的 `dishId`、`quantity`、`dishPrice`，不包含 `Idempotency-Key`。
 - 库存独立于商品表，管理员必须单独初始化 `dish_stock`；未初始化库存的商品不能下单。
@@ -95,6 +100,9 @@
 - 订单超时取消使用 RabbitMQ TTL + DLX，不使用 delayed-message 插件。
 - 订单超时消息通过 `order_timeout_outbox` 提供 at-least-once 投递语义，不承诺 exactly-once；consumer 必须依靠 orderId、订单状态和条件更新保持幂等。
 - RabbitMQ TTL 从 publisher 成功发布后开始计算；RabbitMQ 或 publisher 不可用时，实际取消可能晚于 `expire_time`。
+- 模拟支付是两步流程：用户调用 `PUT /order/{id}/pay` 发起或复用支付流水；模拟第三方调用 `POST /payment/mock/callback` 通知 `SUCCESS` 或 `FAILED`。
+- 支付回调 `process_status` 含义：`1 PROCESSING` 处理中、`2 PROCESSED` 已完成业务处理、`3 DUPLICATE` 新回调号但业务结果已成功、`4 FAILED` 回调校验失败、`5 IGNORED` 业务状态不允许执行。
+- `payStatus=FAILED` 与 `process_status=FAILED` 不是同一概念；失败支付回调被成功接收并把支付流水改为失败时，回调记录可以是 `process_status=PROCESSED`。
 
 ## 数据库信息
 
@@ -113,6 +121,8 @@
 - `order_idempotency`：下单幂等表，唯一索引 `(user_id, idempotency_key)`，状态 `1` 处理中、`2` 已成功、`3` 已失败
 - `dish_stock`：库存现状表，`dish_id` 唯一，记录 `available_stock`、`locked_stock`、`version`
 - `stock_record`：库存流水表，记录 SET/LOCK/CONFIRM/RELEASE 的 before/after、订单、操作人和备注
+- `payment_record`：模拟支付流水表，记录订单、金额、支付渠道、交易号、状态、请求/成功/回调时间
+- `payment_callback_record`：模拟第三方支付回调记录表，`callback_no` 唯一，记录回调处理状态、原始 payload、失败原因，可在未知 `tradeNo` 时保留空的支付/订单引用
 - `order_timeout_outbox`：订单超时消息 outbox，记录 orderId/messageId/payload/expireTime/status/retry/claim/sent/lastError
 
 订单状态：
@@ -165,12 +175,17 @@
 - `POST /order/submit`：根据购物车提交订单
 - `GET /order/{id}`：查询订单详情
 - `GET /order/page`：分页查询订单
+- `PUT /order/{id}/pay`：发起或复用模拟支付，返回 `tradeNo` 和 `PAYING` 状态
 - `PUT /order/{id}/cancel`：取消订单
 - `PUT /order/{id}/accept`：管理员接单
 - `PUT /order/{id}/delivery/start`：管理员开始配送
 - `PUT /order/{id}/complete`：管理员完成配送中订单
 - `PUT /order/{id}/refund/start`：管理员发起内部模拟退款
 - `PUT /order/{id}/refund/complete`：管理员完成内部模拟退款
+
+支付接口：
+
+- `POST /payment/mock/callback`：模拟第三方支付回调，body 包含 `tradeNo`、`callbackNo`、可选 `thirdTradeNo`、`payStatus`、`amount`、`callbackTime`
 
 ## 关键文件
 
@@ -223,6 +238,18 @@
 - `src/main/java/demo3/demo3_068/service/impl/OrderTimeoutOutboxServiceImpl.java`：下单事务内创建 timeout outbox
 - `src/main/java/demo3/demo3_068/service/impl/OrderTimeoutOutboxPublisher.java`：定时扫描、claim、发布、confirm、失败重试、stale 恢复
 - `src/main/java/demo3/demo3_068/service/impl/OrderTimeoutCancelListener.java`：RabbitMQ 超时取消消费者
+- `src/main/java/demo3/demo3_068/controller/PaymentController.java`：模拟支付回调接口入口
+- `src/main/java/demo3/demo3_068/service/PaymentService.java`：支付服务接口
+- `src/main/java/demo3/demo3_068/service/impl/PaymentServiceImpl.java`：支付回调幂等、金额校验、支付/订单/库存事务处理
+- `src/main/java/demo3/demo3_068/entity/PaymentRecord.java`：支付流水实体
+- `src/main/java/demo3/demo3_068/entity/PaymentCallbackRecord.java`：支付回调记录实体
+- `src/main/java/demo3/demo3_068/mapper/PaymentRecordMapper.java`：支付流水 Mapper 接口
+- `src/main/resources/mapper/PaymentRecordMapper.xml`：支付流水 SQL
+- `src/main/java/demo3/demo3_068/mapper/PaymentCallbackRecordMapper.java`：支付回调记录 Mapper 接口
+- `src/main/resources/mapper/PaymentCallbackRecordMapper.xml`：支付回调记录 SQL
+- `src/main/java/demo3/demo3_068/model/PaymentStatus.java`：支付流水状态枚举
+- `src/main/java/demo3/demo3_068/model/PaymentCallbackProcessStatus.java`：支付回调处理状态枚举
+- `src/main/java/demo3/demo3_068/dto/MockPaymentCallbackDTO.java`：模拟支付回调请求 DTO
 - `docs/API_TEST.md`：接口联调命令和数据库验证 SQL
 
 计划创建：
@@ -270,7 +297,7 @@ find src -maxdepth 4 -type f | sort
 
 ## 下一步计划
 
-1. 后续进入支付回调幂等，重点处理“支付成功和超时取消并发”下的外部回调重复/乱序问题。
+1. 支付回调幂等 change 完成后不要忘记按 OpenSpec 流程归档。
 2. 可继续补更细的商家/平台权限。
 
 ## 待用户补充
