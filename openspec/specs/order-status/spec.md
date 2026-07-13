@@ -22,8 +22,8 @@ The system SHALL support explicit order statuses for pending payment, paid, acce
 ### Requirement: Legal Order State Transitions
 The system SHALL allow only state-machine-approved order status transitions.
 
-#### Scenario: Pending order can be paid
-- **WHEN** a user pays their own pending-payment order
+#### Scenario: Pending order can be paid by successful callback
+- **WHEN** a valid successful mock payment callback is processed for a pending-payment order
 - **THEN** the order status MUST transition from pending payment to paid
 
 #### Scenario: Pending order can be cancelled
@@ -53,6 +53,13 @@ The system SHALL allow only state-machine-approved order status transitions.
 #### Scenario: Refunding order can become refunded
 - **WHEN** an administrator completes refund for a refunding order
 - **THEN** the order status MUST transition from refunding to refunded as an internal mock refund completion
+
+### Requirement: Payment Initiation Does Not Change Order State
+The system SHALL not change order business status when mock payment is only initiated.
+
+#### Scenario: Payment initiation keeps pending status
+- **WHEN** a user calls `PUT /order/{id}/pay` for a pending-payment order
+- **THEN** the order MUST remain pending payment until a valid successful callback is processed
 
 ### Requirement: Illegal Order State Transitions Are Rejected
 The system SHALL reject attempts to perform order status transitions that are not allowed by the state machine.
@@ -90,7 +97,7 @@ The system SHALL restrict order status transition operations by actor role and o
 
 #### Scenario: User pays own order
 - **WHEN** a logged-in user pays an order they own
-- **THEN** the system MUST allow the payment only if the order is pending payment
+- **THEN** the system MUST allow payment initiation only if the order is pending payment
 
 #### Scenario: User cannot pay another user's order
 - **WHEN** a logged-in user pays an order owned by another user
@@ -120,23 +127,23 @@ The system SHALL persist every order status transition with a database condition
 - **THEN** the system MUST reject the transition and MUST NOT report success
 
 ### Requirement: Payment Confirms Stock Consumption
-The system SHALL confirm locked stock consumption as part of successful payment.
+The system SHALL confirm locked stock consumption as part of successful mock payment callback processing.
 
-#### Scenario: Paid transition confirms stock
-- **WHEN** a pending-payment order transitions to paid
+#### Scenario: Successful callback paid transition confirms stock
+- **WHEN** a successful mock payment callback transitions a pending-payment order to paid
 - **THEN** the system MUST confirm locked stock consumption for each order detail in the same transaction
 
-#### Scenario: Payment confirms stock only after status update succeeds
-- **WHEN** the conditional update from pending payment to paid affects one row
+#### Scenario: Callback confirms stock only after status update succeeds
+- **WHEN** the conditional update from pending payment to paid affects one row during successful callback processing
 - **THEN** the system MUST confirm locked stock consumption and write `CONFIRM` stock records
 
-#### Scenario: Duplicate payment does not confirm stock twice
-- **WHEN** the conditional update from pending payment to paid affects zero rows
+#### Scenario: Duplicate callback does not confirm stock twice
+- **WHEN** the conditional update from pending payment to paid affects zero rows during callback processing
 - **THEN** the system MUST NOT confirm locked stock consumption
 - **AND** the system MUST NOT write `CONFIRM` stock records
 
-#### Scenario: Payment stock confirmation failure prevents paid status
-- **WHEN** stock confirmation fails during payment
+#### Scenario: Callback stock confirmation failure prevents paid status
+- **WHEN** stock confirmation fails during successful callback processing
 - **THEN** the order MUST NOT transition to paid
 
 ### Requirement: Pending Cancellation Releases Stock

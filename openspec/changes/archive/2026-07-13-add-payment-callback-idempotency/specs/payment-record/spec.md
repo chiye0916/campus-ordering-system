@@ -1,19 +1,4 @@
-## Purpose
-
-Payment records keep an auditable payment trail for orders while the `orders` table remains the source of order business status.
-
-## Requirements
-
-### Requirement: Payment Record Table
-The system SHALL store payment attempt/result data in a dedicated `payment_record` table separate from the `orders` table.
-
-#### Scenario: Payment table stores order payment identity
-- **WHEN** a payment record is created for an order
-- **THEN** the record MUST include order ID, order number, user ID, amount, payment channel, internal trade number, payment status, request time, create time, and update time
-
-#### Scenario: Payment table supports future provider callbacks
-- **WHEN** the system stores a payment record
-- **THEN** the record MUST have nullable fields for third-party trade number, callback time, and failure reason
+## MODIFIED Requirements
 
 ### Requirement: Mock Payment Creates Payment Record
 The system SHALL create or reuse a payment-in-progress record when a pending order starts mock payment, and SHALL finalize payment result through callback handling.
@@ -69,6 +54,8 @@ The system SHALL NOT leave a successful payment record when a payment request is
 - **THEN** the system MUST reject or retry the payment success processing
 - **AND** it MUST NOT create or leave a successful payment record for that callback
 - **AND** it MUST NOT update the order to paid
+
+## ADDED Requirements
 
 ### Requirement: Payment Trade Number Is Unique
 The system SHALL keep payment record trade numbers unique so callbacks can unambiguously identify one payment record.

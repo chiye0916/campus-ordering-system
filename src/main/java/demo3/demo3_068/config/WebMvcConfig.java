@@ -27,7 +27,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/assets/**",
                         "/user/email/code",
                         "/user/register",
-                        "/user/login"
+                        "/user/login",
+                        "/payment/mock/callback"
                 );
     }
 }

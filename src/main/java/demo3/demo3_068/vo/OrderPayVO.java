@@ -12,7 +12,9 @@ public class OrderPayVO {
 
     private Long orderId;
     private String orderNumber;
-    private Integer status;
+    private Integer orderStatus;
     private BigDecimal amount;
-    private LocalDateTime payTime;
+    private String tradeNo;
+    private Integer payStatus;
+    private LocalDateTime requestTime;
 }

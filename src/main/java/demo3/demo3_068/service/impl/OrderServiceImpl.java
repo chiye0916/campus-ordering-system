@@ -23,6 +23,7 @@ import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.model.PaymentStatus;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
@@ -57,8 +58,6 @@ import java.util.stream.Collectors;
 @Service
 public class OrderServiceImpl implements OrderService {
 
-    private static final int PAYMENT_STATUS_PAYING = 1;
-    private static final int PAYMENT_STATUS_SUCCESS = 2;
     private static final String PAYMENT_CHANNEL_MOCK = "MOCK";
     private static final String TIMEOUT_RELEASE_REMARK = "订单超时自动取消释放库存";
     private static final Duration ORDER_STATUS_LOCK_TTL = Duration.ofSeconds(30);
@@ -184,34 +183,27 @@ public class OrderServiceImpl implements OrderService {
     public OrderPayVO pay(Long id) {
         return executeWithOrderStatusLock(id, () -> {
             Orders orders = getOwnOrderOrThrow(id);
-            OrderStatus oldStatus = requireTransition(orders, OrderStatus.PAID, "只有待支付订单才能支付");
-
-            LocalDateTime payTime = LocalDateTime.now();
-            PaymentRecord paymentRecord = buildMockPaymentRecord(orders, payTime);
-            paymentRecordMapper.insert(paymentRecord);
-
-            int rows = ordersMapper.updateToPaidById(id, payTime, oldStatus.getCode(), OrderStatus.PAID.getCode());
-            if (rows == 0) {
-                throw new BusinessException("订单状态已变化，请刷新后重试");
+            OrderStatus oldStatus = OrderStatus.fromCode(orders.getStatus());
+            if (oldStatus != OrderStatus.PENDING_PAYMENT) {
+                throw new BusinessException("只有待支付订单才能发起支付");
             }
 
-            dishStockService.confirmLockedStock(
-                    id,
-                    aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
-                    getCurrentUserIdOrThrow());
-
-            int paymentRows = paymentRecordMapper.updateStatusToSuccessById(
-                    paymentRecord.getId(), payTime, PAYMENT_STATUS_PAYING, PAYMENT_STATUS_SUCCESS);
-            if (paymentRows == 0) {
-                throw new BusinessException("支付流水状态已变化，请刷新后重试");
+            PaymentRecord paymentRecord = paymentRecordMapper.selectLatestMockByOrderId(id, PAYMENT_CHANNEL_MOCK);
+            if (paymentRecord == null || PaymentStatus.FAILED.getCode() == paymentRecord.getStatus()) {
+                paymentRecord = buildMockPaymentRecord(orders, LocalDateTime.now());
+                paymentRecordMapper.insert(paymentRecord);
+            } else if (PaymentStatus.PAYING.getCode() != paymentRecord.getStatus()) {
+                throw new BusinessException("当前支付流水状态不允许重新发起支付");
             }
 
             return OrderPayVO.builder()
                     .orderId(orders.getId())
                     .orderNumber(orders.getNumber())
-                    .status(OrderStatus.PAID.getCode())
+                    .orderStatus(orders.getStatus())
                     .amount(orders.getAmount())
-                    .payTime(payTime)
+                    .tradeNo(paymentRecord.getTradeNo())
+                    .payStatus(PaymentStatus.PAYING.getCode())
+                    .requestTime(paymentRecord.getRequestTime())
                     .build();
         });
     }
@@ -231,6 +223,7 @@ public class OrderServiceImpl implements OrderService {
                     id,
                     aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
                     getCurrentUserIdOrThrow());
+            closeCurrentPayingMockPayment(id);
         });
     }
 
@@ -315,6 +308,7 @@ public class OrderServiceImpl implements OrderService {
                     aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
                     systemOperatorId,
                     TIMEOUT_RELEASE_REMARK);
+            closeCurrentPayingMockPayment(id);
         });
     }
 
@@ -449,11 +443,20 @@ public class OrderServiceImpl implements OrderService {
         paymentRecord.setAmount(orders.getAmount());
         paymentRecord.setPayChannel(PAYMENT_CHANNEL_MOCK);
         paymentRecord.setTradeNo(PaymentTradeNoUtil.generateTradeNo());
-        paymentRecord.setStatus(PAYMENT_STATUS_PAYING);
+        paymentRecord.setStatus(PaymentStatus.PAYING.getCode());
         paymentRecord.setRequestTime(requestTime);
         paymentRecord.setCreateTime(requestTime);
         paymentRecord.setUpdateTime(requestTime);
         return paymentRecord;
+    }
+
+    private void closeCurrentPayingMockPayment(Long orderId) {
+        paymentRecordMapper.closeCurrentPayingMockByOrderId(
+                orderId,
+                PAYMENT_CHANNEL_MOCK,
+                PaymentStatus.PAYING.getCode(),
+                PaymentStatus.CLOSED.getCode(),
+                LocalDateTime.now());
     }
 
     private List<ShoppingCart> refreshCartItems(List<ShoppingCart> cartItems) {

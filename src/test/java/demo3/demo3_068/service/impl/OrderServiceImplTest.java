@@ -6,6 +6,7 @@ import demo3.demo3_068.entity.Dish;
 import demo3.demo3_068.entity.OrderIdempotency;
 import demo3.demo3_068.entity.OrderDetail;
 import demo3.demo3_068.entity.Orders;
+import demo3.demo3_068.entity.PaymentRecord;
 import demo3.demo3_068.entity.ShoppingCart;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.DishMapper;
@@ -18,6 +19,7 @@ import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.common.RedisDistributedLock;
+import demo3.demo3_068.model.PaymentStatus;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
 import demo3.demo3_068.vo.OrderPayVO;
@@ -271,43 +273,65 @@ class OrderServiceImplTest {
     }
 
     @Test
-    void payConfirmsLockedStockAfterStatusUpdateSucceeds() {
+    void payCreatesPayingRecordWithoutChangingOrderOrStock() {
         Orders orders = pendingOrder();
         when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
         when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(paymentRecordMapper.selectLatestMockByOrderId(101L, "MOCK")).thenReturn(null);
         when(paymentRecordMapper.insert(any())).thenAnswer(invocation -> {
             invocation.getArgument(0, demo3.demo3_068.entity.PaymentRecord.class).setId(88L);
             return 1;
         });
-        when(ordersMapper.updateToPaidById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.PAID.getCode())))
-                .thenReturn(1);
-        when(orderDetailMapper.selectByOrderId(101L)).thenReturn(List.of(
-                orderDetail(1L, "10.00", 1),
-                orderDetail(1L, "10.00", 2)));
-        when(paymentRecordMapper.updateStatusToSuccessById(eq(88L), any(), eq(1), eq(2))).thenReturn(1);
 
         OrderPayVO result = orderService.pay(101L);
 
         assertThat(result.getOrderId()).isEqualTo(101L);
-        verify(dishStockService).confirmLockedStock(101L, Map.of(1L, 3), 7L);
+        assertThat(result.getOrderStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT.getCode());
+        assertThat(result.getPayStatus()).isEqualTo(PaymentStatus.PAYING.getCode());
+        assertThat(result.getTradeNo()).isNotBlank();
+        verify(ordersMapper, never()).updateToPaidById(any(), any(), any(), any());
+        verify(dishStockService, never()).confirmLockedStock(any(), any(), any());
     }
 
     @Test
-    void duplicatePayDoesNotConfirmLockedStock() {
+    void payReusesExistingPayingRecord() {
         Orders orders = pendingOrder();
+        PaymentRecord existing = paymentRecord("PAY202607090001", PaymentStatus.PAYING);
         when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
         when(ordersMapper.selectById(101L)).thenReturn(orders);
-        when(paymentRecordMapper.insert(any())).thenAnswer(invocation -> {
-            invocation.getArgument(0, demo3.demo3_068.entity.PaymentRecord.class).setId(88L);
-            return 1;
-        });
-        when(ordersMapper.updateToPaidById(eq(101L), any(), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.PAID.getCode())))
-                .thenReturn(0);
+        when(paymentRecordMapper.selectLatestMockByOrderId(101L, "MOCK")).thenReturn(existing);
+
+        OrderPayVO result = orderService.pay(101L);
+
+        assertThat(result.getTradeNo()).isEqualTo("PAY202607090001");
+        verify(paymentRecordMapper, never()).insert(any());
+        verify(ordersMapper, never()).updateToPaidById(any(), any(), any(), any());
+        verify(dishStockService, never()).confirmLockedStock(any(), any(), any());
+    }
+
+    @Test
+    void payCreatesNewPayingRecordAfterFailedPayment() {
+        Orders orders = pendingOrder();
+        PaymentRecord failed = paymentRecord("PAY202607090001", PaymentStatus.FAILED);
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(paymentRecordMapper.selectLatestMockByOrderId(101L, "MOCK")).thenReturn(failed);
+
+        OrderPayVO result = orderService.pay(101L);
+
+        assertThat(result.getTradeNo()).isNotEqualTo("PAY202607090001");
+        verify(paymentRecordMapper).insert(any(PaymentRecord.class));
+        verify(dishStockService, never()).confirmLockedStock(any(), any(), any());
+    }
+
+    @Test
+    void payLockFailureDoesNotCreatePayingRecord() {
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(false);
 
         assertThatThrownBy(() -> orderService.pay(101L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("订单状态已变化，请刷新后重试");
-        verify(dishStockService, never()).confirmLockedStock(any(), any(), any());
+                .hasMessage("订单处理中，请稍后重试");
+        verify(paymentRecordMapper, never()).insert(any());
     }
 
     @Test
@@ -324,6 +348,8 @@ class OrderServiceImplTest {
         orderService.cancel(101L);
 
         verify(dishStockService).releaseLockedStock(101L, Map.of(1L, 1, 2L, 2), 7L);
+        verify(paymentRecordMapper).closeCurrentPayingMockByOrderId(
+                eq(101L), eq("MOCK"), eq(PaymentStatus.PAYING.getCode()), eq(PaymentStatus.CLOSED.getCode()), any());
     }
 
     @Test
@@ -359,6 +385,8 @@ class OrderServiceImplTest {
                 Map.of(1L, 3),
                 999L,
                 "订单超时自动取消释放库存");
+        verify(paymentRecordMapper).closeCurrentPayingMockByOrderId(
+                eq(101L), eq("MOCK"), eq(PaymentStatus.PAYING.getCode()), eq(PaymentStatus.CLOSED.getCode()), any());
     }
 
     @Test
@@ -452,6 +480,20 @@ class OrderServiceImplTest {
         orders.setStatus(OrderStatus.PENDING_PAYMENT.getCode());
         orders.setAmount(new BigDecimal("30.00"));
         return orders;
+    }
+
+    private PaymentRecord paymentRecord(String tradeNo, PaymentStatus status) {
+        PaymentRecord paymentRecord = new PaymentRecord();
+        paymentRecord.setId(88L);
+        paymentRecord.setOrderId(101L);
+        paymentRecord.setOrderNumber("202607080001");
+        paymentRecord.setUserId(7L);
+        paymentRecord.setAmount(new BigDecimal("30.00"));
+        paymentRecord.setPayChannel("MOCK");
+        paymentRecord.setTradeNo(tradeNo);
+        paymentRecord.setStatus(status.getCode());
+        paymentRecord.setRequestTime(java.time.LocalDateTime.now());
+        return paymentRecord;
     }
 
     private OrderIdempotency existingIdempotency(String requestHash,

@@ -90,6 +90,31 @@ WHERE NOT EXISTS (
 );
 ```
 
+如果你的数据库是在支付回调幂等功能之前创建的，需要补 `payment_callback_record` 表：
+
+```sql
+CREATE TABLE IF NOT EXISTS payment_callback_record (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    payment_record_id BIGINT,
+    order_id BIGINT,
+    trade_no VARCHAR(64) NOT NULL,
+    callback_no VARCHAR(64) NOT NULL,
+    third_trade_no VARCHAR(128),
+    pay_status VARCHAR(32) NOT NULL,
+    amount DECIMAL(10, 2) NOT NULL,
+    callback_time DATETIME NOT NULL,
+    process_status TINYINT NOT NULL COMMENT '1:PROCESSING, 2:PROCESSED, 3:DUPLICATE, 4:FAILED, 5:IGNORED',
+    failure_reason VARCHAR(255),
+    raw_payload TEXT,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_payment_callback_no (callback_no),
+    KEY idx_payment_callback_trade_no (trade_no),
+    KEY idx_payment_callback_payment_record_id (payment_record_id),
+    KEY idx_payment_callback_order_id (order_id)
+);
+```
+
 ## 1. 准备普通用户和管理员
 
 发送注册邮箱验证码：
@@ -522,36 +547,49 @@ curl "$BASE_URL/order/page?page=1&pageSize=10" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-支付订单：
+发起模拟支付：
 
 ```bash
 curl -X PUT "$BASE_URL/order/$ORDER_ID/pay" \
   -H "Authorization: Bearer $USER_TOKEN"
 ```
 
-期望结果中 `data.status` 应该是 `2`，并返回支付关键信息：
+期望结果中 `data.orderStatus` 仍然是 `1`，`data.payStatus` 是 `1`，并返回模拟支付流水号：
 
 ```json
 {
   "orderId": 1,
   "orderNumber": "订单号",
-  "status": 2,
+  "orderStatus": 1,
   "amount": 44.00,
-  "payTime": "支付时间"
+  "tradeNo": "PAY...",
+  "payStatus": 1,
+  "requestTime": "发起支付时间"
 }
 ```
 
-查看支付流水，应该存在一条 `MOCK` 支付成功记录：
+保存返回的 `tradeNo` 和一个唯一回调号：
+
+```bash
+TRADE_NO="把 pay 接口返回的 data.tradeNo 粘贴到这里"
+CALLBACK_NO="CB$(date +%Y%m%d%H%M%S)"
+```
+
+查看支付流水，应该存在一条 `MOCK` 支付中记录，订单仍为待支付：
 
 ```bash
 docker exec -it mysql8 mysql -u chiye -p1234 demo3_db
 ```
 
 ```sql
-select id, order_id, order_number, user_id, amount, pay_channel, trade_no, status, request_time, success_time
+select id, order_id, order_number, user_id, amount, pay_channel, trade_no, status, request_time, success_time, callback_time
 from payment_record
 where order_id = 你的订单ID
 order by id desc;
+
+select id, status, pay_time
+from orders
+where id = 你的订单ID;
 exit;
 ```
 
@@ -559,12 +597,53 @@ exit;
 
 ```text
 pay_channel=MOCK
-status=2
+payment_record.status=1
 trade_no 以 PAY 开头且不为空
-success_time 不为空
+orders.status=1
+success_time 为空
 ```
 
-支付成功会确认锁定库存：`locked_stock` 减少订单数量，`available_stock` 不变，并写入 `CONFIRM` 流水：
+发送模拟支付成功回调。这个接口模拟第三方支付平台通知，不需要普通用户 JWT：
+
+```bash
+curl -X POST "$BASE_URL/payment/mock/callback" \
+  -H "Content-Type: application/json" \
+  -d "{\"tradeNo\":\"$TRADE_NO\",\"callbackNo\":\"$CALLBACK_NO\",\"thirdTradeNo\":\"THIRD-$CALLBACK_NO\",\"payStatus\":\"SUCCESS\",\"amount\":44.00,\"callbackTime\":\"$(date '+%Y-%m-%dT%H:%M:%S')\"}"
+```
+
+期望结果：
+
+```text
+code=200
+```
+
+回调成功后，订单变为已支付，支付流水变为支付成功，并写入回调记录：
+
+```sql
+select id, status, pay_time
+from orders
+where id = 你的订单ID;
+
+select id, order_id, amount, pay_channel, trade_no, third_trade_no, status, success_time, callback_time
+from payment_record
+where trade_no = '你的 TRADE_NO';
+
+select id, payment_record_id, order_id, trade_no, callback_no, third_trade_no,
+       pay_status, amount, process_status, failure_reason
+from payment_callback_record
+where callback_no = '你的 CALLBACK_NO';
+```
+
+期望结果：
+
+```text
+orders.status=2
+payment_record.status=2
+payment_callback_record.process_status=2
+third_trade_no 已保存
+```
+
+成功回调会确认锁定库存：`locked_stock` 减少订单数量，`available_stock` 不变，并写入 `CONFIRM` 流水：
 
 ```sql
 select dish_id, available_stock, locked_stock, version
@@ -584,6 +663,34 @@ order by id;
 dish_stock.available_stock 仍为 98
 dish_stock.locked_stock 从 2 变为 0
 stock_record 中新增 CONFIRM，change_quantity=2
+```
+
+重复发送同一个 `callbackNo`，应该幂等返回成功，不重复更新订单或库存：
+
+```bash
+curl -X POST "$BASE_URL/payment/mock/callback" \
+  -H "Content-Type: application/json" \
+  -d "{\"tradeNo\":\"$TRADE_NO\",\"callbackNo\":\"$CALLBACK_NO\",\"thirdTradeNo\":\"THIRD-CHANGED\",\"payStatus\":\"SUCCESS\",\"amount\":44.00,\"callbackTime\":\"$(date '+%Y-%m-%dT%H:%M:%S')\"}"
+```
+
+```sql
+select callback_no, count(*) as count
+from payment_callback_record
+where callback_no = '你的 CALLBACK_NO'
+group by callback_no;
+
+select change_type, count(*) as count
+from stock_record
+where order_id = 你的订单ID
+  and change_type = 'CONFIRM'
+group by change_type;
+```
+
+期望结果：
+
+```text
+同一个 callback_no 只有 1 行
+CONFIRM 仍然只有 1 条
 ```
 
 已支付订单不能直接取消；本阶段没有用户申请退款接口，只支持管理员内部模拟退款：
@@ -681,7 +788,7 @@ curl -X PUT "$BASE_URL/order/$ORDER_ID/pay" \
 
 ```text
 code=409
-message=只有待支付订单才能支付
+message=只有待支付订单才能发起支付
 ```
 
 Redis 订单状态锁验证：同一个订单的并发状态流转只能有一个请求进入业务逻辑。先重新创建一个待支付订单，得到新的 `LOCK_ORDER_ID`：
@@ -722,8 +829,8 @@ wait
 
 ```text
 最多一个请求返回 code=200
-其他请求返回 code=409，message 可能是“订单处理中，请稍后重试”或“只有待支付订单才能支付”
-payment_record 中该订单最多只有一条 status=2 的 MOCK 支付成功记录
+其他请求返回 code=409，message 可能是“订单处理中，请稍后重试”
+payment_record 中该订单最多只有一条 status=1 的 MOCK 支付中记录
 ```
 
 查看支付流水：
@@ -734,6 +841,52 @@ from payment_record
 where order_id = 你的 LOCK_ORDER_ID
 group by order_id, pay_channel, status;
 ```
+
+支付回调边界验证可以复用一笔新的待支付订单和它的 `TRADE_NO`。以下场景都应该写入 `payment_callback_record`，但只有第一笔有效成功回调会更新订单和写 `CONFIRM`：
+
+```bash
+BAD_AMOUNT_CALLBACK_NO="CB-AMOUNT-$(date +%s)"
+curl -X POST "$BASE_URL/payment/mock/callback" \
+  -H "Content-Type: application/json" \
+  -d "{\"tradeNo\":\"$TRADE_NO\",\"callbackNo\":\"$BAD_AMOUNT_CALLBACK_NO\",\"payStatus\":\"SUCCESS\",\"amount\":0.01,\"callbackTime\":\"$(date '+%Y-%m-%dT%H:%M:%S')\"}"
+
+UNKNOWN_TRADE_CALLBACK_NO="CB-UNKNOWN-$(date +%s)"
+curl -X POST "$BASE_URL/payment/mock/callback" \
+  -H "Content-Type: application/json" \
+  -d "{\"tradeNo\":\"PAY-NOT-FOUND\",\"callbackNo\":\"$UNKNOWN_TRADE_CALLBACK_NO\",\"payStatus\":\"SUCCESS\",\"amount\":44.00,\"callbackTime\":\"$(date '+%Y-%m-%dT%H:%M:%S')\"}"
+```
+
+期望：两个请求都返回 `code=200`，但 `process_status=4`，不会更新订单、支付成功状态或库存。
+
+失败支付回调会把当前 `PAYING` 支付流水改成 `FAILED`，订单仍保持待支付，锁定库存不释放也不确认；用户可以再次调用 `PUT /order/{id}/pay` 创建新的 `PAYING` 流水：
+
+```bash
+FAILED_CALLBACK_NO="CB-FAILED-$(date +%s)"
+curl -X POST "$BASE_URL/payment/mock/callback" \
+  -H "Content-Type: application/json" \
+  -d "{\"tradeNo\":\"$TRADE_NO\",\"callbackNo\":\"$FAILED_CALLBACK_NO\",\"payStatus\":\"FAILED\",\"amount\":44.00,\"callbackTime\":\"$(date '+%Y-%m-%dT%H:%M:%S')\"}"
+
+curl -X PUT "$BASE_URL/order/$ORDER_ID/pay" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+期望：失败回调的 `payment_callback_record.process_status=2`，这是“回调处理成功”，不是“支付成功”；`payment_record.status=3` 表示支付失败，重新发起支付会返回新的 `tradeNo`。
+
+手工插入或保留一条最近的 `PROCESSING` 回调记录时，同一个 `callbackNo` 再次请求应该返回 `code=409`，不会被当成幂等成功；把 `update_time` 改到 5 分钟以前后再请求，系统会重新尝试处理并最终进入终态：
+
+```sql
+insert into payment_callback_record (
+  trade_no, callback_no, pay_status, amount, callback_time, process_status, raw_payload
+) values (
+  '你的 TRADE_NO', 'CB-PROCESSING-RECENT', 'SUCCESS', 44.00, now(), 1, '{}'
+);
+
+update payment_callback_record
+set update_time = date_sub(now(), interval 10 minute)
+where callback_no = 'CB-PROCESSING-RECENT';
+```
+
+对已成功、已失败或已关闭的支付流水再发送新 `callbackNo`，期望只记录 `DUPLICATE` 或 `IGNORED` 终态，不反转支付状态、不更新订单、不写新的 `CONFIRM`。超时取消后到达的成功回调也只记录 no-op，不会把已取消订单改回已支付。
 
 库存并发验证：把商品可用库存设置为一个很小的值，例如 3，然后并发提交多笔数量为 1 的订单。成功订单数不应该超过可用库存，失败请求应返回库存不足或处理中相关业务错误。
 
