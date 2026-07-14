@@ -11,6 +11,7 @@ import demo3.demo3_068.entity.Dish;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.CategoryMapper;
 import demo3.demo3_068.mapper.DishMapper;
+import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.service.DishListCacheService;
 import demo3.demo3_068.vo.DishVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +49,8 @@ class DishServiceImplTest {
     private StringRedisTemplate stringRedisTemplate;
     @Mock
     private ValueOperations<String, String> valueOperations;
+    @Mock
+    private BusinessMetrics businessMetrics;
 
     private DishServiceImpl dishService;
 
@@ -56,7 +59,8 @@ class DishServiceImplTest {
         DishListCacheService cacheService = new DishListCacheService(
                 stringRedisTemplate,
                 new ObjectMapper(),
-                new DishCacheProperties());
+                new DishCacheProperties(),
+                businessMetrics);
         dishService = new DishServiceImpl(dishMapper, categoryMapper, cacheService);
     }
 

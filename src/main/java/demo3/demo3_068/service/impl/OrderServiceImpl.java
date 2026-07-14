@@ -24,6 +24,8 @@ import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.model.PaymentStatus;
+import demo3.demo3_068.observability.BusinessMetrics;
+import demo3.demo3_068.observability.TraceContext;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
@@ -33,6 +35,7 @@ import demo3.demo3_068.vo.OrderDetailVO;
 import demo3.demo3_068.vo.OrderItemVO;
 import demo3.demo3_068.vo.OrderPayVO;
 import demo3.demo3_068.vo.OrderVO;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -56,6 +59,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class OrderServiceImpl implements OrderService {
 
     private static final String PAYMENT_CHANNEL_MOCK = "MOCK";
@@ -72,6 +76,7 @@ public class OrderServiceImpl implements OrderService {
     private final RedisDistributedLock redisDistributedLock;
     private final DishStockService dishStockService;
     private final OrderTimeoutOutboxService orderTimeoutOutboxService;
+    private final BusinessMetrics businessMetrics;
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
                             OrderDetailMapper orderDetailMapper,
@@ -82,7 +87,8 @@ public class OrderServiceImpl implements OrderService {
                             UserMapper userMapper,
                             RedisDistributedLock redisDistributedLock,
                             DishStockService dishStockService,
-                            OrderTimeoutOutboxService orderTimeoutOutboxService) {
+                            OrderTimeoutOutboxService orderTimeoutOutboxService,
+                            BusinessMetrics businessMetrics) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
         this.orderIdempotencyMapper = orderIdempotencyMapper;
@@ -93,6 +99,7 @@ public class OrderServiceImpl implements OrderService {
         this.redisDistributedLock = redisDistributedLock;
         this.dishStockService = dishStockService;
         this.orderTimeoutOutboxService = orderTimeoutOutboxService;
+        this.businessMetrics = businessMetrics;
     }
 
     @Override
@@ -100,61 +107,88 @@ public class OrderServiceImpl implements OrderService {
     public Long submit(OrderSubmitDTO orderSubmitDTO, String idempotencyKey) {
         Long userId = getCurrentUserIdOrThrow();
         String normalizedKey = idempotencyKey.trim();
+        Long orderId = null;
 
-        OrderIdempotency existing = orderIdempotencyMapper.selectByUserIdAndKey(userId, normalizedKey);
-        if (existing != null) {
-            return handleExistingIdempotency(existing, userId, orderSubmitDTO);
-        }
-
-        List<ShoppingCart> cartItems = shoppingCartMapper.selectByUserId(userId);
-        if (cartItems.isEmpty()) {
-            throw new BusinessException("购物车为空，不能下单");
-        }
-        List<ShoppingCart> refreshedCartItems = refreshCartItems(cartItems);
-        String requestHash = buildRequestHash(userId, orderSubmitDTO.getRemark(), refreshedCartItems);
-
-        OrderIdempotency orderIdempotency = buildProcessingIdempotency(userId, normalizedKey, requestHash);
         try {
-            orderIdempotencyMapper.insert(orderIdempotency);
-        } catch (DuplicateKeyException e) {
-            OrderIdempotency duplicate = orderIdempotencyMapper.selectByUserIdAndKey(userId, normalizedKey);
-            if (duplicate == null) {
-                throw e;
+            OrderIdempotency existing = orderIdempotencyMapper.selectByUserIdAndKey(userId, normalizedKey);
+            if (existing != null) {
+                orderId = handleExistingIdempotency(existing, userId, orderSubmitDTO);
+                businessMetrics.recordOrderSubmit("duplicate", "idempotent_replay");
+                log.info("Order submit outcome traceId={} result=idempotent_duplicate userId={} orderId={} idempotencyKey={}",
+                        traceId(), userId, orderId, normalizedKey);
+                return orderId;
             }
-            return handleExistingIdempotency(duplicate, requestHash);
+
+            List<ShoppingCart> cartItems = shoppingCartMapper.selectByUserId(userId);
+            if (cartItems.isEmpty()) {
+                throw new BusinessException("购物车为空，不能下单");
+            }
+            List<ShoppingCart> refreshedCartItems = refreshCartItems(cartItems);
+            String requestHash = buildRequestHash(userId, orderSubmitDTO.getRemark(), refreshedCartItems);
+
+            OrderIdempotency orderIdempotency = buildProcessingIdempotency(userId, normalizedKey, requestHash);
+            try {
+                orderIdempotencyMapper.insert(orderIdempotency);
+            } catch (DuplicateKeyException e) {
+                OrderIdempotency duplicate = orderIdempotencyMapper.selectByUserIdAndKey(userId, normalizedKey);
+                if (duplicate == null) {
+                    throw e;
+                }
+                orderId = handleExistingIdempotency(duplicate, requestHash);
+                businessMetrics.recordOrderSubmit("duplicate", "concurrent_replay");
+                log.info("Order submit outcome traceId={} result=idempotent_duplicate userId={} orderId={} idempotencyKey={}",
+                        traceId(), userId, orderId, normalizedKey);
+                return orderId;
+            }
+
+            BigDecimal totalAmount = refreshedCartItems.stream()
+                    .map(item -> item.getDishPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            Orders orders = new Orders();
+            orders.setNumber(OrderNumberUtil.generateOrderNumber());
+            orders.setUserId(userId);
+            orders.setStatus(OrderStatus.PENDING_PAYMENT.getCode());
+            orders.setAmount(totalAmount);
+            orders.setRemark(orderSubmitDTO.getRemark());
+            orders.setOrderTime(LocalDateTime.now());
+            ordersMapper.insert(orders);
+            orderId = orders.getId();
+
+            dishStockService.lockStock(orders.getId(), aggregateCartQuantities(refreshedCartItems), userId);
+
+            List<OrderDetail> details = refreshedCartItems.stream()
+                    .map(item -> toOrderDetail(orders.getId(), item))
+                    .toList();
+            orderDetailMapper.insertBatch(details);
+
+            shoppingCartMapper.deleteByUserId(userId);
+            orderTimeoutOutboxService.createPendingForOrder(orders.getId());
+            int rows = orderIdempotencyMapper.markSucceeded(
+                    orderIdempotency.getId(),
+                    orders.getId(),
+                    OrderIdempotencyStatus.SUCCEEDED.getCode(),
+                    LocalDateTime.now());
+            if (rows == 0) {
+                throw new BusinessException("下单幂等记录状态更新失败，请重试");
+            }
+            businessMetrics.recordOrderSubmit("success", "created");
+            log.info("Order submit outcome traceId={} result=success userId={} orderId={} idempotencyKey={}",
+                    traceId(), userId, orders.getId(), normalizedKey);
+            return orders.getId();
+        } catch (BusinessException e) {
+            String result = e.getCode() == 409 ? "conflict" : "fail";
+            String reason = orderSubmitReason(e);
+            businessMetrics.recordOrderSubmit(result, reason);
+            log.warn("Order submit outcome traceId={} result={} reason={} userId={} orderId={} idempotencyKey={}",
+                    traceId(), result, reason, userId, orderId, normalizedKey);
+            throw e;
+        } catch (Exception e) {
+            businessMetrics.recordOrderSubmit("fail", "unexpected");
+            log.error("Order submit outcome traceId={} result=fail reason=unexpected userId={} orderId={} idempotencyKey={}",
+                    traceId(), userId, orderId, normalizedKey, e);
+            throw e;
         }
-
-        BigDecimal totalAmount = refreshedCartItems.stream()
-                .map(item -> item.getDishPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        Orders orders = new Orders();
-        orders.setNumber(OrderNumberUtil.generateOrderNumber());
-        orders.setUserId(userId);
-        orders.setStatus(OrderStatus.PENDING_PAYMENT.getCode());
-        orders.setAmount(totalAmount);
-        orders.setRemark(orderSubmitDTO.getRemark());
-        orders.setOrderTime(LocalDateTime.now());
-        ordersMapper.insert(orders);
-
-        dishStockService.lockStock(orders.getId(), aggregateCartQuantities(refreshedCartItems), userId);
-
-        List<OrderDetail> details = refreshedCartItems.stream()
-                .map(item -> toOrderDetail(orders.getId(), item))
-                .toList();
-        orderDetailMapper.insertBatch(details);
-
-        shoppingCartMapper.deleteByUserId(userId);
-        orderTimeoutOutboxService.createPendingForOrder(orders.getId());
-        int rows = orderIdempotencyMapper.markSucceeded(
-                orderIdempotency.getId(),
-                orders.getId(),
-                OrderIdempotencyStatus.SUCCEEDED.getCode(),
-                LocalDateTime.now());
-        if (rows == 0) {
-            throw new BusinessException("下单幂等记录状态更新失败，请重试");
-        }
-        return orders.getId();
     }
 
     @Override
@@ -195,6 +229,8 @@ public class OrderServiceImpl implements OrderService {
             } else if (PaymentStatus.PAYING.getCode() != paymentRecord.getStatus()) {
                 throw new BusinessException("当前支付流水状态不允许重新发起支付");
             }
+            log.info("Mock payment initiation traceId={} result=success userId={} orderId={} tradeNo={}",
+                    traceId(), orders.getUserId(), orders.getId(), paymentRecord.getTradeNo());
 
             return OrderPayVO.builder()
                     .orderId(orders.getId())
@@ -224,6 +260,8 @@ public class OrderServiceImpl implements OrderService {
                     aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
                     getCurrentUserIdOrThrow());
             closeCurrentPayingMockPayment(id);
+            log.info("Order cancel outcome traceId={} result=success source=manual userId={} orderId={}",
+                    traceId(), BaseContext.getCurrentUserId(), id);
         });
     }
 
@@ -282,11 +320,17 @@ public class OrderServiceImpl implements OrderService {
         executeWithOrderStatusLock(id, () -> {
             Orders orders = ordersMapper.selectById(id);
             if (orders == null) {
+                businessMetrics.recordTimeoutCancel("noop");
+                log.info("Order cancel outcome traceId={} result=noop source=timeout operator=system orderId={} messageId={} reason=not_found",
+                        traceId(), id, messageId);
                 return;
             }
 
             OrderStatus currentStatus = OrderStatus.fromCode(orders.getStatus());
             if (currentStatus != OrderStatus.PENDING_PAYMENT) {
+                businessMetrics.recordTimeoutCancel("noop");
+                log.info("Order cancel outcome traceId={} result=noop source=timeout operator=system orderId={} messageId={} reason=status_{}",
+                        traceId(), id, messageId, currentStatus.name().toLowerCase());
                 return;
             }
 
@@ -296,6 +340,9 @@ public class OrderServiceImpl implements OrderService {
                     OrderStatus.PENDING_PAYMENT.getCode(),
                     OrderStatus.CANCELLED.getCode());
             if (rows == 0) {
+                businessMetrics.recordTimeoutCancel("noop");
+                log.info("Order cancel outcome traceId={} result=noop source=timeout operator=system orderId={} messageId={} reason=state_changed",
+                        traceId(), id, messageId);
                 return;
             }
 
@@ -309,6 +356,9 @@ public class OrderServiceImpl implements OrderService {
                     systemOperatorId,
                     TIMEOUT_RELEASE_REMARK);
             closeCurrentPayingMockPayment(id);
+            businessMetrics.recordTimeoutCancel("success");
+            log.info("Order cancel outcome traceId={} result=success source=timeout operator=system orderId={} messageId={}",
+                    traceId(), id, messageId);
         });
     }
 
@@ -504,6 +554,24 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(409, "订单正在处理中，请稍后重试");
         }
         throw new BusinessException(409, "上一次下单请求未成功，请使用新的 Idempotency-Key");
+    }
+
+    private String orderSubmitReason(BusinessException e) {
+        if (e.getCode() == 409) {
+            return "idempotency_conflict";
+        }
+        String message = e.getMessage() == null ? "" : e.getMessage();
+        if (message.contains("库存")) {
+            return "stock";
+        }
+        if (message.contains("购物车")) {
+            return "cart";
+        }
+        return "business";
+    }
+
+    private String traceId() {
+        return org.slf4j.MDC.get(TraceContext.TRACE_ID);
     }
 
     private OrderIdempotency buildProcessingIdempotency(Long userId, String idempotencyKey, String requestHash) {

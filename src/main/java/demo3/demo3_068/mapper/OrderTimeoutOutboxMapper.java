@@ -5,6 +5,7 @@ import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 public interface OrderTimeoutOutboxMapper {
 
@@ -44,4 +45,8 @@ public interface OrderTimeoutOutboxMapper {
                                @Param("failedStatus") Integer failedStatus,
                                @Param("lastError") String lastError,
                                @Param("maxRetryCount") Integer maxRetryCount);
+
+    long countByStatus(@Param("status") Integer status);
+
+    List<Map<String, Object>> countGroupedByStatus();
 }

@@ -10,6 +10,7 @@ public class OrderTimeoutOutbox {
     private Long id;
     private Long orderId;
     private String messageId;
+    private String traceId;
     private String payload;
     private LocalDateTime expireTime;
     private Integer status;

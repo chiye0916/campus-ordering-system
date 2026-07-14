@@ -2,6 +2,7 @@ package demo3.demo3_068.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import demo3.demo3_068.config.DishCacheProperties;
+import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.vo.DishVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,8 @@ class DishListCacheServiceTest {
     private StringRedisTemplate stringRedisTemplate;
     @Mock
     private ValueOperations<String, String> valueOperations;
+    @Mock
+    private BusinessMetrics businessMetrics;
 
     private ObjectMapper objectMapper;
     private DishCacheProperties properties;
@@ -39,7 +42,7 @@ class DishListCacheServiceTest {
     void setUp() {
         objectMapper = new ObjectMapper();
         properties = new DishCacheProperties();
-        dishListCacheService = new DishListCacheService(stringRedisTemplate, objectMapper, properties);
+        dishListCacheService = new DishListCacheService(stringRedisTemplate, objectMapper, properties, businessMetrics);
     }
 
     @Test

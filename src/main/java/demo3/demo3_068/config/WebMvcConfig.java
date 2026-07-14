@@ -25,6 +25,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/app.js",
                         "/favicon.ico",
                         "/assets/**",
+                        "/actuator/**",
                         "/user/email/code",
                         "/user/register",
                         "/user/login",

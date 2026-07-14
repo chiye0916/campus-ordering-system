@@ -8,6 +8,7 @@
         <id column="id" property="id"/>
         <result column="order_id" property="orderId"/>
         <result column="message_id" property="messageId"/>
+        <result column="trace_id" property="traceId"/>
         <result column="payload" property="payload"/>
         <result column="expire_time" property="expireTime"/>
         <result column="status" property="status"/>
@@ -21,18 +22,18 @@
     </resultMap>
 
     <sql id="BaseColumns">
-        id, order_id, message_id, payload, expire_time, status, retry_count, next_retry_time,
+        id, order_id, message_id, trace_id, payload, expire_time, status, retry_count, next_retry_time,
         publish_claim_time, sent_time, last_error, create_time, update_time
     </sql>
 
     <insert id="insert" parameterType="demo3.demo3_068.entity.OrderTimeoutOutbox"
             useGeneratedKeys="true" keyProperty="id">
         insert into order_timeout_outbox (
-            order_id, message_id, payload, expire_time, status, retry_count, next_retry_time,
+            order_id, message_id, trace_id, payload, expire_time, status, retry_count, next_retry_time,
             publish_claim_time, sent_time, last_error, create_time, update_time
         )
         values (
-            #{orderId}, #{messageId}, #{payload}, #{expireTime}, #{status}, #{retryCount}, #{nextRetryTime},
+            #{orderId}, #{messageId}, #{traceId}, #{payload}, #{expireTime}, #{status}, #{retryCount}, #{nextRetryTime},
             #{publishClaimTime}, #{sentTime}, #{lastError}, #{createTime}, #{updateTime}
         )
     </insert>
@@ -96,4 +97,16 @@
           and publish_claim_time &lt;= #{claimDeadline}
           and retry_count &lt; #{maxRetryCount}
     </update>
+
+    <select id="countByStatus" resultType="long">
+        select count(*)
+        from order_timeout_outbox
+        where status = #{status}
+    </select>
+
+    <select id="countGroupedByStatus" resultType="map">
+        select status, count(*) as count
+        from order_timeout_outbox
+        group by status
+    </select>
 </mapper>

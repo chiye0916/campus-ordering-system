@@ -61,6 +61,56 @@ password: 12345
 BASE_URL="http://127.0.0.1:8080"
 ```
 
+### 可观测性快速检查
+
+本项目暴露的 Actuator Web 端点仅限 `/actuator/health`、`/actuator/info`、`/actuator/metrics`。健康详情配置为 `management.endpoint.health.show-details=never`，不会在未加管理端鉴权的响应里展开 MySQL、Redis、RabbitMQ 等内部细节。`/actuator/env`、`/actuator/beans`、`/actuator/configprops`、`/actuator/heapdump`、`/actuator/threaddump` 和 `/actuator/prometheus` 不应暴露。
+
+```bash
+curl "$BASE_URL/actuator/health"
+curl "$BASE_URL/actuator/info"
+curl "$BASE_URL/actuator/metrics"
+curl "$BASE_URL/actuator/metrics/dish.list.cache.requests"
+curl "$BASE_URL/actuator/metrics/order.submit.requests"
+curl "$BASE_URL/actuator/metrics/payment.callback.requests"
+curl "$BASE_URL/actuator/metrics/order.timeout.cancel.requests"
+curl "$BASE_URL/actuator/metrics/order.timeout.outbox.records"
+```
+
+请求追踪使用 `X-Trace-Id`。客户端传入 8 到 64 位、只包含字母/数字/连字符/下划线的值时会原样返回；缺失或非法时服务端会生成新值。响应头也会包含 `X-Trace-Id`：
+
+```bash
+curl -i "$BASE_URL/actuator/health" -H "X-Trace-Id: local_trace-001"
+```
+
+### 手动 k6 脚本
+
+`scripts/k6/` 下的脚本只用于本地手动 smoke/load 辅助，不属于 Maven、CI 或严格校验门禁。
+
+```bash
+k6 run -e BASE_URL="$BASE_URL" -e CATEGORY_ID=1 scripts/k6/dish-list.js
+```
+
+下单前必须先准备登录 token、购物车数据、商品库存和幂等键：
+
+```bash
+k6 run \
+  -e BASE_URL="$BASE_URL" \
+  -e USER_TOKEN="$USER_TOKEN" \
+  -e IDEMPOTENCY_KEY="manual-k6-$(date +%s)" \
+  scripts/k6/order-submit.js
+```
+
+支付回调前必须先准备有效的模拟支付流水、金额和唯一回调号：
+
+```bash
+k6 run \
+  -e BASE_URL="$BASE_URL" \
+  -e TRADE_NO="$TRADE_NO" \
+  -e AMOUNT="30.00" \
+  -e CALLBACK_NO="manual-callback-$(date +%s)" \
+  scripts/k6/payment-callback.js
+```
+
 如果你的数据库是在邮箱验证码功能之前创建的，需要先给 `user` 表补邮箱字段：
 
 ```bash
@@ -80,6 +130,7 @@ CREATE TABLE IF NOT EXISTS order_timeout_outbox (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     order_id BIGINT NOT NULL,
     message_id VARCHAR(64) NOT NULL,
+    trace_id VARCHAR(64),
     payload TEXT NOT NULL,
     expire_time DATETIME NOT NULL,
     status TINYINT NOT NULL COMMENT '1:PENDING, 2:PUBLISHING, 3:SENT, 4:FAILED',
@@ -102,6 +153,12 @@ SELECT 'system_timeout', NULL, '12345', '订单超时系统', 'SYSTEM'
 WHERE NOT EXISTS (
     SELECT 1 FROM `user` WHERE username = 'system_timeout'
 );
+```
+
+如果已有 `order_timeout_outbox` 表但缺少本阶段追踪字段，可单独补充：
+
+```sql
+alter table order_timeout_outbox add column trace_id varchar(64) null after message_id;
 ```
 
 如果你的数据库是在支付回调幂等功能之前创建的，需要补 `payment_callback_record` 表：

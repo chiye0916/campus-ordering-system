@@ -18,6 +18,8 @@ import demo3.demo3_068.model.MockPayStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.model.PaymentCallbackProcessStatus;
 import demo3.demo3_068.model.PaymentStatus;
+import demo3.demo3_068.observability.BusinessMetrics;
+import demo3.demo3_068.observability.TraceContext;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.PaymentService;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +50,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final RedisDistributedLock redisDistributedLock;
     private final DishStockService dishStockService;
     private final ObjectMapper objectMapper;
+    private final BusinessMetrics businessMetrics;
 
     public PaymentServiceImpl(PaymentCallbackRecordMapper paymentCallbackRecordMapper,
                               PaymentRecordMapper paymentRecordMapper,
@@ -55,7 +58,8 @@ public class PaymentServiceImpl implements PaymentService {
                               OrderDetailMapper orderDetailMapper,
                               RedisDistributedLock redisDistributedLock,
                               DishStockService dishStockService,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              BusinessMetrics businessMetrics) {
         this.paymentCallbackRecordMapper = paymentCallbackRecordMapper;
         this.paymentRecordMapper = paymentRecordMapper;
         this.ordersMapper = ordersMapper;
@@ -63,6 +67,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.redisDistributedLock = redisDistributedLock;
         this.dishStockService = dishStockService;
         this.objectMapper = objectMapper;
+        this.businessMetrics = businessMetrics;
     }
 
     @Override
@@ -70,27 +75,47 @@ public class PaymentServiceImpl implements PaymentService {
     public void handleMockCallback(MockPaymentCallbackDTO callbackDTO) {
         LocalDateTime now = LocalDateTime.now();
         String rawPayload = serializePayload(callbackDTO);
-        PaymentCallbackRecord callbackRecord = createOrLoadProcessingRecord(callbackDTO, rawPayload, now);
-        if (callbackRecord == null) {
-            return;
-        }
+        PaymentCallbackRecord callbackRecord = null;
+        PaymentRecord paymentRecord = null;
+        try {
+            callbackRecord = createOrLoadProcessingRecord(callbackDTO, rawPayload, now);
+            if (callbackRecord == null) {
+                businessMetrics.recordPaymentCallback("duplicate");
+                log.info("Payment callback outcome traceId={} result=duplicate tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                        traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), null, null);
+                return;
+            }
 
-        PaymentRecord paymentRecord = paymentRecordMapper.selectByTradeNo(callbackDTO.getTradeNo());
-        if (paymentRecord == null) {
-            finalizeCallback(callbackRecord, null, null, PaymentCallbackProcessStatus.FAILED, "未知支付流水", now);
-            return;
-        }
-        if (callbackDTO.getAmount().compareTo(paymentRecord.getAmount()) != 0) {
-            finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.FAILED, "回调金额不匹配", now);
-            return;
-        }
+            paymentRecord = paymentRecordMapper.selectByTradeNo(callbackDTO.getTradeNo());
+            if (paymentRecord == null) {
+                finalizeCallback(callbackRecord, null, null, PaymentCallbackProcessStatus.FAILED, "未知支付流水", now);
+                businessMetrics.recordPaymentCallback("ignored");
+                log.info("Payment callback outcome traceId={} result=ignored reason=unknown_trade tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                        traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), null, null);
+                return;
+            }
+            if (callbackDTO.getAmount().compareTo(paymentRecord.getAmount()) != 0) {
+                finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.FAILED, "回调金额不匹配", now);
+                businessMetrics.recordPaymentCallback("amount_mismatch");
+                log.warn("Payment callback outcome traceId={} result=amount_mismatch tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                        traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), paymentRecord.getOrderId(), paymentRecord.getId());
+                return;
+            }
 
-        if (MockPayStatus.FAILED.equals(callbackDTO.getPayStatus())) {
-            handleFailedPaymentCallback(callbackDTO, callbackRecord, paymentRecord, now);
-            return;
-        }
+            if (MockPayStatus.FAILED.equals(callbackDTO.getPayStatus())) {
+                handleFailedPaymentCallback(callbackDTO, callbackRecord, paymentRecord, now);
+                return;
+            }
 
-        handleSuccessfulPaymentCallback(callbackDTO, callbackRecord, paymentRecord, now);
+            handleSuccessfulPaymentCallback(callbackDTO, callbackRecord, paymentRecord, now);
+        } catch (PaymentCallbackRetryableException e) {
+            businessMetrics.recordPaymentCallback("retryable_conflict");
+            log.warn("Payment callback outcome traceId={} result=retryable_conflict tradeNo={} callbackNo={} orderId={} paymentRecordId={} message={}",
+                    traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(),
+                    paymentRecord == null ? null : paymentRecord.getOrderId(),
+                    paymentRecord == null ? null : paymentRecord.getId(), e.getMessage());
+            throw e;
+        }
     }
 
     private PaymentCallbackRecord createOrLoadProcessingRecord(MockPaymentCallbackDTO callbackDTO,
@@ -137,11 +162,17 @@ public class PaymentServiceImpl implements PaymentService {
                     PaymentStatus.FAILED.getCode());
             if (rows == 1) {
                 finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.PROCESSED, null, now);
+                businessMetrics.recordPaymentCallback("failed");
+                log.info("Payment callback outcome traceId={} result=failed tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                        traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), paymentRecord.getOrderId(), paymentRecord.getId());
                 return;
             }
             paymentRecord = paymentRecordMapper.selectByTradeNo(callbackDTO.getTradeNo());
         }
         finalizeCallback(callbackRecord, paymentRecord, terminalNoopStatus(paymentRecord), "支付流水已是终态，失败回调不再变更业务状态", now);
+        businessMetrics.recordPaymentCallback("ignored");
+        log.info("Payment callback outcome traceId={} result=ignored reason=terminal tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), paymentRecord.getOrderId(), paymentRecord.getId());
     }
 
     private void handleSuccessfulPaymentCallback(MockPaymentCallbackDTO callbackDTO,
@@ -150,10 +181,16 @@ public class PaymentServiceImpl implements PaymentService {
                                                  LocalDateTime now) {
         if (PaymentStatus.SUCCESS.getCode() == paymentRecord.getStatus()) {
             finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.DUPLICATE, "支付流水已成功", now);
+            businessMetrics.recordPaymentCallback("duplicate");
+            log.info("Payment callback outcome traceId={} result=duplicate tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                    traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), paymentRecord.getOrderId(), paymentRecord.getId());
             return;
         }
         if (PaymentStatus.PAYING.getCode() != paymentRecord.getStatus()) {
             finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.IGNORED, "支付流水状态不允许成功回调", now);
+            businessMetrics.recordPaymentCallback("ignored");
+            log.info("Payment callback outcome traceId={} result=ignored reason=payment_status tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                    traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), paymentRecord.getOrderId(), paymentRecord.getId());
             return;
         }
 
@@ -176,6 +213,9 @@ public class PaymentServiceImpl implements PaymentService {
         Orders orders = ordersMapper.selectById(paymentRecord.getOrderId());
         if (orders == null || !Integer.valueOf(OrderStatus.PENDING_PAYMENT.getCode()).equals(orders.getStatus())) {
             finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.IGNORED, "订单状态不允许支付成功", now);
+            businessMetrics.recordPaymentCallback("ignored");
+            log.info("Payment callback outcome traceId={} result=ignored reason=order_status tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                    traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), paymentRecord.getOrderId(), paymentRecord.getId());
             return;
         }
 
@@ -189,6 +229,10 @@ public class PaymentServiceImpl implements PaymentService {
         if (paymentRows == 0) {
             PaymentRecord current = paymentRecordMapper.selectByTradeNo(callbackDTO.getTradeNo());
             finalizeCallback(callbackRecord, current, terminalNoopStatus(current), "支付流水状态已变化", now);
+            businessMetrics.recordPaymentCallback(callbackResultFor(current));
+            log.info("Payment callback outcome traceId={} result={} reason=payment_state_changed tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                    traceId(), callbackResultFor(current), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(),
+                    current == null ? null : current.getOrderId(), current == null ? null : current.getId());
             return;
         }
 
@@ -206,6 +250,9 @@ public class PaymentServiceImpl implements PaymentService {
                 aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(paymentRecord.getOrderId())),
                 paymentRecord.getUserId());
         finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.PROCESSED, null, now);
+        businessMetrics.recordPaymentCallback("success");
+        log.info("Payment callback outcome traceId={} result=success tradeNo={} callbackNo={} orderId={} paymentRecordId={}",
+                traceId(), callbackDTO.getTradeNo(), callbackDTO.getCallbackNo(), paymentRecord.getOrderId(), paymentRecord.getId());
     }
 
     private PaymentCallbackProcessStatus terminalNoopStatus(PaymentRecord paymentRecord) {
@@ -301,5 +348,16 @@ public class PaymentServiceImpl implements PaymentService {
                 redisDistributedLock.unlock(lockKey, lockValue);
             }
         });
+    }
+
+    private String callbackResultFor(PaymentRecord paymentRecord) {
+        if (paymentRecord != null && PaymentStatus.SUCCESS.getCode() == paymentRecord.getStatus()) {
+            return "duplicate";
+        }
+        return "ignored";
+    }
+
+    private String traceId() {
+        return org.slf4j.MDC.get(TraceContext.TRACE_ID);
     }
 }

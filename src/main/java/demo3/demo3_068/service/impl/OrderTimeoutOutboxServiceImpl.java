@@ -8,6 +8,7 @@ import demo3.demo3_068.entity.OrderTimeoutOutbox;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.OrderTimeoutOutboxMapper;
 import demo3.demo3_068.model.OrderTimeoutOutboxStatus;
+import demo3.demo3_068.observability.TraceContext;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
 import org.springframework.stereotype.Service;
 
@@ -20,13 +21,16 @@ public class OrderTimeoutOutboxServiceImpl implements OrderTimeoutOutboxService 
     private final OrderTimeoutOutboxMapper orderTimeoutOutboxMapper;
     private final OrderTimeoutProperties orderTimeoutProperties;
     private final ObjectMapper objectMapper;
+    private final TraceContext traceContext;
 
     public OrderTimeoutOutboxServiceImpl(OrderTimeoutOutboxMapper orderTimeoutOutboxMapper,
                                          OrderTimeoutProperties orderTimeoutProperties,
-                                         ObjectMapper objectMapper) {
+                                         ObjectMapper objectMapper,
+                                         TraceContext traceContext) {
         this.orderTimeoutOutboxMapper = orderTimeoutOutboxMapper;
         this.orderTimeoutProperties = orderTimeoutProperties;
         this.objectMapper = objectMapper;
+        this.traceContext = traceContext;
     }
 
     @Override
@@ -39,6 +43,7 @@ public class OrderTimeoutOutboxServiceImpl implements OrderTimeoutOutboxService 
         OrderTimeoutOutbox outbox = new OrderTimeoutOutbox();
         outbox.setOrderId(orderId);
         outbox.setMessageId(messageId);
+        outbox.setTraceId(traceContext.currentTraceId());
         outbox.setPayload(toJson(payload));
         outbox.setExpireTime(expireTime);
         outbox.setStatus(OrderTimeoutOutboxStatus.PENDING.getCode());
