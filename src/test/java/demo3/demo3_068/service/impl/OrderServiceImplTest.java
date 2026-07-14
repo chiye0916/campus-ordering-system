@@ -20,6 +20,7 @@ import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.common.RedisDistributedLock;
 import demo3.demo3_068.model.PaymentStatus;
+import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
 import demo3.demo3_068.vo.OrderPayVO;
@@ -69,6 +70,8 @@ class OrderServiceImplTest {
     private DishStockService dishStockService;
     @Mock
     private OrderTimeoutOutboxService orderTimeoutOutboxService;
+    @Mock
+    private BusinessMetrics businessMetrics;
 
     private OrderServiceImpl orderService;
 
@@ -84,7 +87,8 @@ class OrderServiceImplTest {
                 userMapper,
                 redisDistributedLock,
                 dishStockService,
-                orderTimeoutOutboxService);
+                orderTimeoutOutboxService,
+                businessMetrics);
         BaseContext.setCurrentUserId(7L);
     }
 

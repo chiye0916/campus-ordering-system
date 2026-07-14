@@ -4,6 +4,7 @@ import demo3.demo3_068.config.OrderTimeoutProperties;
 import demo3.demo3_068.entity.OrderTimeoutOutbox;
 import demo3.demo3_068.mapper.OrderTimeoutOutboxMapper;
 import demo3.demo3_068.model.OrderTimeoutOutboxStatus;
+import demo3.demo3_068.observability.TraceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,7 +38,7 @@ class OrderTimeoutOutboxPublisherTest {
         properties = new OrderTimeoutProperties();
         properties.getOutbox().setPublisherConfirmTimeout(Duration.ofMillis(20));
         properties.getOutbox().setRetryDelay(Duration.ofSeconds(30));
-        publisher = new OrderTimeoutOutboxPublisher(mapper, rabbitTemplate, properties);
+        publisher = new OrderTimeoutOutboxPublisher(mapper, rabbitTemplate, properties, new TraceContext());
     }
 
     @Test

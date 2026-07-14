@@ -1,8 +1,10 @@
 package demo3.demo3_068.exception;
 
 import demo3.demo3_068.common.Result;
+import demo3.demo3_068.observability.TraceContext;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BindException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -15,7 +17,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
-    public Result<Void> handleBusinessException(BusinessException e) {
+    public Result<Void> handleBusinessException(BusinessException e, HttpServletRequest request) {
+        log.warn("Handled business exception traceId={} path={} method={} errorCode={} message={} exceptionClass={}",
+                traceId(), request.getRequestURI(), request.getMethod(), e.getCode(), e.getMessage(), e.getClass().getName());
         return Result.error(e.getCode(), e.getMessage());
     }
 
@@ -53,8 +57,13 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public Result<Void> handleException(Exception e) {
-        log.error("系统异常", e);
+    public Result<Void> handleException(Exception e, HttpServletRequest request) {
+        log.error("Handled unexpected exception traceId={} path={} method={} errorCode={} message={} exceptionClass={}",
+                traceId(), request.getRequestURI(), request.getMethod(), 500, e.getMessage(), e.getClass().getName(), e);
         return Result.error(500, "系统异常");
+    }
+
+    private String traceId() {
+        return org.slf4j.MDC.get(TraceContext.TRACE_ID);
     }
 }

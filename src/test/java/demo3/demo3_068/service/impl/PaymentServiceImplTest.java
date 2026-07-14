@@ -16,6 +16,7 @@ import demo3.demo3_068.model.MockPayStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.model.PaymentCallbackProcessStatus;
 import demo3.demo3_068.model.PaymentStatus;
+import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.service.DishStockService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,6 +56,8 @@ class PaymentServiceImplTest {
     private RedisDistributedLock redisDistributedLock;
     @Mock
     private DishStockService dishStockService;
+    @Mock
+    private BusinessMetrics businessMetrics;
 
     private PaymentServiceImpl paymentService;
 
@@ -67,7 +70,8 @@ class PaymentServiceImplTest {
                 orderDetailMapper,
                 redisDistributedLock,
                 dishStockService,
-                new ObjectMapper());
+                new ObjectMapper(),
+                businessMetrics);
         lenient().when(paymentCallbackRecordMapper.finalizeById(any(), any(), any(), any(), any(), any())).thenReturn(1);
     }
 

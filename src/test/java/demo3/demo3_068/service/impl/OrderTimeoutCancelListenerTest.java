@@ -3,6 +3,8 @@ package demo3.demo3_068.service.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import demo3.demo3_068.dto.OrderTimeoutMessageDTO;
 import demo3.demo3_068.exception.BusinessException;
+import demo3.demo3_068.observability.BusinessMetrics;
+import demo3.demo3_068.observability.TraceContext;
 import demo3.demo3_068.service.OrderService;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
@@ -23,7 +25,8 @@ class OrderTimeoutCancelListenerTest {
     void validMessageDelegatesToOrderService() throws Exception {
         OrderService orderService = mock(OrderService.class);
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
-        OrderTimeoutCancelListener listener = new OrderTimeoutCancelListener(objectMapper, orderService);
+        OrderTimeoutCancelListener listener = new OrderTimeoutCancelListener(
+                objectMapper, orderService, new TraceContext(), mock(BusinessMetrics.class));
         String payload = objectMapper.writeValueAsString(
                 new OrderTimeoutMessageDTO(101L, "message-1", LocalDateTime.now()));
 
@@ -35,7 +38,8 @@ class OrderTimeoutCancelListenerTest {
     @Test
     void malformedMessageIsDroppedWithoutRetry() {
         OrderService orderService = mock(OrderService.class);
-        OrderTimeoutCancelListener listener = new OrderTimeoutCancelListener(new ObjectMapper(), orderService);
+        OrderTimeoutCancelListener listener = new OrderTimeoutCancelListener(
+                new ObjectMapper(), orderService, new TraceContext(), mock(BusinessMetrics.class));
 
         listener.handle(message("{bad json"));
 
@@ -46,7 +50,8 @@ class OrderTimeoutCancelListenerTest {
     void technicalFailurePropagatesForRetry() throws Exception {
         OrderService orderService = mock(OrderService.class);
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
-        OrderTimeoutCancelListener listener = new OrderTimeoutCancelListener(objectMapper, orderService);
+        OrderTimeoutCancelListener listener = new OrderTimeoutCancelListener(
+                objectMapper, orderService, new TraceContext(), mock(BusinessMetrics.class));
         String payload = objectMapper.writeValueAsString(
                 new OrderTimeoutMessageDTO(101L, "message-1", LocalDateTime.now()));
         doThrow(new BusinessException("订单处理中，请稍后重试"))

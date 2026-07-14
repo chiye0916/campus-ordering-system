@@ -6,6 +6,7 @@ import demo3.demo3_068.dto.OrderTimeoutMessageDTO;
 import demo3.demo3_068.entity.OrderTimeoutOutbox;
 import demo3.demo3_068.mapper.OrderTimeoutOutboxMapper;
 import demo3.demo3_068.model.OrderTimeoutOutboxStatus;
+import demo3.demo3_068.observability.TraceContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -23,7 +24,7 @@ class OrderTimeoutOutboxServiceImplTest {
         OrderTimeoutProperties properties = new OrderTimeoutProperties();
         properties.setDelay(Duration.ofMinutes(15));
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
-        OrderTimeoutOutboxServiceImpl service = new OrderTimeoutOutboxServiceImpl(mapper, properties, objectMapper);
+        OrderTimeoutOutboxServiceImpl service = new OrderTimeoutOutboxServiceImpl(mapper, properties, objectMapper, new TraceContext());
 
         service.createPendingForOrder(101L);
 

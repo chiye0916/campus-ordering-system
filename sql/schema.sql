@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS order_timeout_outbox (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     order_id BIGINT NOT NULL,
     message_id VARCHAR(64) NOT NULL,
+    trace_id VARCHAR(64),
     payload TEXT NOT NULL,
     expire_time DATETIME NOT NULL,
     status TINYINT NOT NULL COMMENT '1:PENDING, 2:PUBLISHING, 3:SENT, 4:FAILED',

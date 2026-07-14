@@ -74,9 +74,10 @@
 
 正在进行：
 
-- active change：`add-testcontainers-regression-suite`
-- 正在验证 Testcontainers 回归测试套件：默认 `./mvnw test` 继续运行快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 显式运行 MySQL/Redis/RabbitMQ 容器支撑的 `*IT` 集成测试
-- 前一个 `enhance-redis-dish-cache` change 的实现内容已进入当前代码上下文，不再作为本文档的 active change
+- 当前没有 active change。
+- 第七阶段 `add-testcontainers-regression-suite` 已实现、验证、同步主 specs 并归档。
+- 默认 `./mvnw test` 继续运行快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 显式运行 MySQL/Redis/RabbitMQ 容器支撑的 `*IT` 集成测试。
+- 后续可讨论第八阶段：日志、监控、压测 / 可靠性增强。
 
 ## 重要约定
 
