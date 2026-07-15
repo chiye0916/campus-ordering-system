@@ -8,6 +8,7 @@ import demo3.demo3_068.dto.UserRegisterDTO;
 import demo3.demo3_068.entity.User;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.UserMapper;
+import demo3.demo3_068.model.Role;
 import demo3.demo3_068.service.UserService;
 import demo3.demo3_068.utils.JwtUtil;
 import demo3.demo3_068.vo.UserLoginVO;
@@ -72,6 +73,9 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public Long register(UserRegisterDTO userRegisterDTO) {
+        if (userRegisterDTO.getRole() != null && !userRegisterDTO.getRole().isBlank()) {
+            throw new BusinessException(403, "无管理员权限");
+        }
         String email = userRegisterDTO.getEmail().trim();
         User existingUser = userMapper.selectByUsername(userRegisterDTO.getUsername());
         if (existingUser != null) {
@@ -88,7 +92,7 @@ public class UserServiceImpl implements UserService {
         user.setEmail(email);
         user.setPassword(passwordEncoder.encode(userRegisterDTO.getPassword()));
         user.setNickname(userRegisterDTO.getNickname());
-        user.setRole(Constants.DEFAULT_USER_ROLE);
+        user.setRole(Role.USER.name());
         userMapper.insert(user);
         stringRedisTemplate.delete(Constants.REGISTER_EMAIL_CODE_KEY_PREFIX + email);
         return user.getId();
@@ -97,12 +101,15 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserLoginVO login(UserLoginDTO userLoginDTO) {
         User user = userMapper.selectByUsername(userLoginDTO.getUsername());
-        if (user == null || Constants.SYSTEM_USER_ROLE.equals(user.getRole())
-                || !passwordEncoder.matches(userLoginDTO.getPassword(), user.getPassword())) {
+        if (user == null) {
+            throw new BusinessException(401, "用户名或密码错误");
+        }
+        Role role = Role.parseForAuthentication(user.getRole());
+        if (role == Role.SYSTEM || !passwordEncoder.matches(userLoginDTO.getPassword(), user.getPassword())) {
             throw new BusinessException(401, "用户名或密码错误");
         }
 
-        String token = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRole());
+        String token = jwtUtil.generateToken(user.getId(), user.getUsername(), role.name());
         String redisKey = Constants.LOGIN_USER_KEY_PREFIX + user.getId();
         stringRedisTemplate.opsForValue().set(redisKey, token, jwtUtil.getTtlMillis(), TimeUnit.MILLISECONDS);
 
@@ -110,7 +117,7 @@ public class UserServiceImpl implements UserService {
                 .id(user.getId())
                 .username(user.getUsername())
                 .nickname(user.getNickname())
-                .role(user.getRole())
+                .role(role.name())
                 .token(token)
                 .build();
     }

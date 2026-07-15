@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS payment_callback_record (
 );
 ```
 
-## 1. 准备普通用户和管理员
+## 1. 准备普通用户、商家、配送员和管理员
 
 发送注册邮箱验证码：
 
@@ -224,27 +224,37 @@ curl -X POST "$BASE_URL/user/login" \
 USER_TOKEN="把 zhangsan 登录返回的 token 粘贴到这里"
 ```
 
-注册管理员用户时同样需要先获取邮箱验证码。Demo 当前不开放前端直接注册管理员，建议先注册为普通用户，再通过数据库授权为管理员：
+公开注册只能创建 `USER`。如果请求体携带 `role=ADMIN`、`MERCHANT`、`DELIVERY` 或 `SYSTEM`，接口会返回 `403`，不会把公开注册用户持久化为特权角色。商家、配送员和管理员请先注册普通用户，再通过 SQL 或测试 helper 授权：
 
 ```bash
 curl -X POST "$BASE_URL/user/register" \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"admin\",\"email\":\"另一个邮箱@qq.com\",\"password\":\"123456\",\"emailCode\":\"$EMAIL_CODE\",\"nickname\":\"管理员\"}"
+  -d "{\"username\":\"merchant\",\"email\":\"商家邮箱@qq.com\",\"password\":\"123456\",\"emailCode\":\"$EMAIL_CODE\",\"nickname\":\"商家\"}"
+
+curl -X POST "$BASE_URL/user/register" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"delivery\",\"email\":\"配送邮箱@qq.com\",\"password\":\"123456\",\"emailCode\":\"$EMAIL_CODE\",\"nickname\":\"配送员\"}"
+
+curl -X POST "$BASE_URL/user/register" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"admin\",\"email\":\"管理员邮箱@qq.com\",\"password\":\"123456\",\"emailCode\":\"$EMAIL_CODE\",\"nickname\":\"管理员\"}"
 ```
 
-把 `admin` 改成管理员：
+授权角色：
 
 ```bash
 docker exec -it mysql8 mysql -u chiye -p1234 demo3_db
 ```
 
 ```sql
+update user set role = 'MERCHANT' where username = 'merchant';
+update user set role = 'DELIVERY' where username = 'delivery';
 update user set role = 'ADMIN' where username = 'admin';
 select id, username, nickname, role from user;
 exit;
 ```
 
-重新登录管理员。注意：修改 role 之后必须重新登录，因为 JWT 里的 role 是登录时生成的。
+重新登录这些账号。注意：修改 role 之后必须重新登录，因为 JWT 里的 role 是登录时生成的。
 
 ```bash
 curl -X POST "$BASE_URL/user/login" \
@@ -256,7 +266,19 @@ curl -X POST "$BASE_URL/user/login" \
 
 ```bash
 ADMIN_TOKEN="把 admin 登录返回的 token 粘贴到这里"
+MERCHANT_TOKEN="把 merchant 登录返回的 token 粘贴到这里"
+DELIVERY_TOKEN="把 delivery 登录返回的 token 粘贴到这里"
 ```
+
+角色边界速查：
+
+| 角色 | 允许 |
+| --- | --- |
+| `USER` | 购物车、下单、发起模拟支付、待支付自取消、查看自己的订单 |
+| `MERCHANT` | 分类/菜品/库存管理、接单、查看已支付/已接单订单列表，查看商家相关详情 |
+| `DELIVERY` | 开始配送、完成配送中订单、查看已接单/配送中订单列表，查看配送相关详情 |
+| `ADMIN` | 管理、履约兜底、全部订单可见、内部模拟退款 |
+| `SYSTEM` | 仅内部审计；不能正常登录，也不能通过普通 HTTP 权限 |
 
 验证两个身份：
 
@@ -292,12 +314,12 @@ curl -X POST "$BASE_URL/category" \
 {"code":403,"message":"无管理员权限","data":null}
 ```
 
-管理员新增分类，应该成功：
+商家或管理员新增分类，应该成功：
 
 ```bash
 curl -X POST "$BASE_URL/category" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Authorization: Bearer $MERCHANT_TOKEN" \
   -d '{"name":"权限测试分类","sort":99}'
 ```
 
@@ -365,7 +387,7 @@ curl -X POST "$BASE_URL/dish" \
 DISH_ID="把新增商品返回的 data 粘贴到这里"
 ```
 
-库存独立于商品创建，需要管理员单独初始化可用库存。请求体字段必须使用 `availableStock`：
+库存独立于商品创建，需要商家或管理员单独初始化可用库存。请求体字段必须使用 `availableStock`：
 
 ```bash
 curl -X PUT "$BASE_URL/dish/$DISH_ID/stock" \
@@ -423,7 +445,7 @@ curl "$BASE_URL/dish/list?categoryId=$CATEGORY_ID" \
 docker exec -it redis7 redis-cli get "dish:list:category:$CATEGORY_ID"
 ```
 
-缓存说明：`/dish/list` 按 `dish:list:category:{categoryId}` 做 Cache Aside 缓存；非空列表默认 TTL 为 30 分钟，已有分类但没有上架商品时缓存 JSON `[]`，默认 TTL 为 5 分钟。Redis 读取或写入失败时接口会回退数据库结果，不因缓存失败报错；缓存 JSON 损坏时会尝试删除坏 key，再查数据库并重写缓存。新增、修改、上下架商品会删除受影响分类的列表缓存；修改分类时会同时删除旧分类和新分类缓存。管理员库存设置/查询不会删除 `/dish/list` 缓存，因为当前 `DishVO` 列表不包含库存字段。若缓存删除失败，数据库修改仍会成功，旧列表最多保留到 TTL 过期，属于 Cache Aside 的最终一致性取舍。
+缓存说明：`/dish/list` 按 `dish:list:category:{categoryId}` 做 Cache Aside 缓存；非空列表默认 TTL 为 30 分钟，已有分类但没有上架商品时缓存 JSON `[]`，默认 TTL 为 5 分钟。Redis 读取或写入失败时接口会回退数据库结果，不因缓存失败报错；缓存 JSON 损坏时会尝试删除坏 key，再查数据库并重写缓存。新增、修改、上下架商品会删除受影响分类的列表缓存；修改分类时会同时删除旧分类和新分类缓存。商家/管理员库存设置/查询不会删除 `/dish/list` 缓存，因为当前 `DishVO` 列表不包含库存字段。若缓存删除失败，数据库修改仍会成功，旧列表最多保留到 TTL 过期，属于 Cache Aside 的最终一致性取舍。
 
 修改商品价格：
 
@@ -613,11 +635,15 @@ curl "$BASE_URL/order/page?page=1&pageSize=10" \
   -H "Authorization: Bearer $USER_TOKEN"
 ```
 
-管理员分页查询全部订单：
+管理员分页查询全部订单；商家只能看到 `PAID`、`ACCEPTED`，配送员只能看到 `ACCEPTED`、`DELIVERING`：
 
 ```bash
 curl "$BASE_URL/order/page?page=1&pageSize=10" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
+curl "$BASE_URL/order/page?page=1&pageSize=10" \
+  -H "Authorization: Bearer $MERCHANT_TOKEN"
+curl "$BASE_URL/order/page?page=1&pageSize=10" \
+  -H "Authorization: Bearer $DELIVERY_TOKEN"
 ```
 
 发起模拟支付：
@@ -794,25 +820,25 @@ code=409
 message=只有配送中订单才能完成
 ```
 
-管理员接单：
+商家或管理员接单：
 
 ```bash
 curl -X PUT "$BASE_URL/order/$ORDER_ID/accept" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+  -H "Authorization: Bearer $MERCHANT_TOKEN"
 ```
 
-管理员开始配送：
+配送员或管理员开始配送：
 
 ```bash
 curl -X PUT "$BASE_URL/order/$ORDER_ID/delivery/start" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+  -H "Authorization: Bearer $DELIVERY_TOKEN"
 ```
 
-管理员完成订单：
+配送员或管理员完成订单：
 
 ```bash
 curl -X PUT "$BASE_URL/order/$ORDER_ID/complete" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+  -H "Authorization: Bearer $DELIVERY_TOKEN"
 ```
 
 再次查询订单详情，状态应该是 `3`：

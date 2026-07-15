@@ -30,7 +30,7 @@ public class CategoryController {
 
     @PostMapping
     public Result<Long> create(@Valid @RequestBody CategoryCreateDTO categoryCreateDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         return Result.success(categoryService.create(categoryCreateDTO));
     }
 
@@ -42,14 +42,14 @@ public class CategoryController {
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id,
                                @Valid @RequestBody CategoryUpdateDTO categoryUpdateDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         categoryService.update(id, categoryUpdateDTO);
         return Result.success();
     }
 
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         categoryService.delete(id);
         return Result.success();
     }

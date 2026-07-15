@@ -12,11 +12,14 @@ public interface OrdersMapper {
     Orders selectById(@Param("id") Long id);
 
     List<Orders> selectPage(@Param("userId") Long userId,
+                            @Param("visibleStatusCodes") List<Integer> visibleStatusCodes,
                             @Param("query") OrderPageQueryDTO query,
                             @Param("offset") int offset,
                             @Param("pageSize") int pageSize);
 
-    long countPage(@Param("userId") Long userId, @Param("query") OrderPageQueryDTO query);
+    long countPage(@Param("userId") Long userId,
+                   @Param("visibleStatusCodes") List<Integer> visibleStatusCodes,
+                   @Param("query") OrderPageQueryDTO query);
 
     int insert(Orders orders);
 

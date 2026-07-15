@@ -53,8 +53,26 @@ const loginPresets = {
     password: "123456",
     label: "管理员 / admin · 管理员",
     title: "管理员 / admin",
-    detail: "管理员 · 经营后台",
+    detail: "管理员 · 平台后台",
     avatar: "管",
+    admin: true
+  },
+  merchant: {
+    username: "merchant",
+    password: "123456",
+    label: "商家 / merchant · 商家",
+    title: "商家 / merchant",
+    detail: "商家 · 菜品与接单",
+    avatar: "商",
+    admin: true
+  },
+  delivery: {
+    username: "delivery",
+    password: "123456",
+    label: "配送 / delivery · 配送员",
+    title: "配送 / delivery",
+    detail: "配送员 · 配送履约",
+    avatar: "配",
     admin: true
   }
 };
@@ -161,8 +179,26 @@ function isAdmin() {
   return state.user?.role === "ADMIN";
 }
 
+function isManagementRole() {
+  return ["MERCHANT", "DELIVERY", "ADMIN"].includes(state.user?.role);
+}
+
+function canManageCatalog() {
+  return ["MERCHANT", "ADMIN"].includes(state.user?.role);
+}
+
 function isUser() {
   return state.user?.role === "USER";
+}
+
+function roleText(role) {
+  return {
+    USER: "普通用户",
+    MERCHANT: "商家",
+    DELIVERY: "配送员",
+    ADMIN: "管理员",
+    SYSTEM: "系统"
+  }[role] || role || "未知角色";
 }
 
 function setSession(loginVO) {
@@ -200,7 +236,7 @@ function renderSession() {
   const loggedIn = Boolean(state.token && state.user);
   $("#loginPage").classList.toggle("hidden", loggedIn);
   $("#userAppPage").classList.toggle("hidden", !loggedIn || !isUser());
-  $("#adminAppPage").classList.toggle("hidden", !loggedIn || !isAdmin());
+  $("#adminAppPage").classList.toggle("hidden", !loggedIn || !isManagementRole());
 
   if (!loggedIn) {
     return;
@@ -209,20 +245,24 @@ function renderSession() {
   const name = state.user.nickname || state.user.username;
   if (isUser()) {
     $("#currentUserName").textContent = name;
-    $("#currentUserRole").textContent = "普通用户";
+    $("#currentUserRole").textContent = roleText(state.user.role);
     $("#userInitial").textContent = name.slice(0, 1).toUpperCase();
   }
-  if (isAdmin()) {
+  if (isManagementRole()) {
     $("#adminUserName").textContent = name;
+    const adminRole = $("#adminUserRole");
+    if (adminRole) {
+      adminRole.textContent = roleText(state.user.role);
+    }
     $("#adminInitial").textContent = name.slice(0, 1).toUpperCase();
   }
 }
 
 function switchUserView(viewId) {
   if (!isUser()) {
-    if (isAdmin()) {
+    if (isManagementRole()) {
       switchAdminView("adminDashboardView");
-      showToast("管理员不能进入用户点餐端，已返回管理后台", "error");
+      showToast("当前角色不能进入用户点餐端，已返回管理后台", "error");
       return;
     }
     showToast("无管理员权限", "error");
@@ -236,7 +276,7 @@ function switchUserView(viewId) {
 }
 
 function switchAdminView(viewId) {
-  if (!isAdmin()) {
+  if (!isManagementRole()) {
     showToast("无管理员权限", "error");
     return;
   }
@@ -310,7 +350,7 @@ function selectLoginAccount(account, source = "preset") {
     selected = {
       username: recent.username,
       password: "",
-      label: `${recent.nickname || recent.username} / ${recent.username} · ${recent.role === "ADMIN" ? "管理员" : "普通用户"}`
+      label: `${recent.nickname || recent.username} / ${recent.username} · ${roleText(recent.role)}`
     };
     showToast("已填入最近登录账号，请输入密码", "success");
   } else {
@@ -339,13 +379,13 @@ async function openLoginAccountPicker() {
     .filter((account) => !presetUsernames.has(account.username));
   const recentCards = recentAccounts.map((account) => {
     const name = account.nickname || account.username;
-    const roleText = account.role === "ADMIN" ? "管理员" : "普通用户";
+    const recentRoleText = roleText(account.role);
     return `
       <button class="identity-card ${state.selectedLoginAccount === `recent:${account.username}` ? "active" : ""}" type="button" data-action="select-login-account" data-account-source="recent" data-account="${escapeHtml(account.username)}">
-        <span class="identity-avatar ${account.role === "ADMIN" ? "admin" : ""}">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>
+        <span class="identity-avatar ${account.role !== "USER" ? "admin" : ""}">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>
         <span>
           <strong>${escapeHtml(name)} / ${escapeHtml(account.username)}</strong>
-          <small>${roleText} · 本机最近登录 · 需输入密码</small>
+          <small>${recentRoleText} · 本机最近登录 · 需输入密码</small>
         </span>
       </button>
     `;
@@ -422,6 +462,8 @@ async function openRegisterModal() {
           <span>用户类型</span>
           <select id="registerRole">
             <option value="USER">普通用户</option>
+            <option value="MERCHANT">商家</option>
+            <option value="DELIVERY">配送员</option>
             <option value="ADMIN">管理员</option>
           </select>
         </label>
@@ -449,8 +491,8 @@ async function openRegisterModal() {
         showToast("两次密码不一致", "error");
         return false;
       }
-      if (role === "ADMIN") {
-        showToast("当前后端不开放前端注册管理员，请先注册普通用户后由数据库授权", "error");
+      if (role !== "USER") {
+        showToast("当前后端只开放普通用户注册，商家、配送员和管理员请通过数据库或测试数据授权", "error");
         return false;
       }
 
@@ -709,11 +751,11 @@ function renderOrders(target = $("#orderList"), adminMode = false) {
         <button class="button button-secondary" type="button" data-action="order-detail" data-id="${order.id}">查看</button>
         ${order.status === 1 && !adminMode ? `<button class="button success-button" type="button" data-action="order-pay" data-id="${order.id}">支付</button>` : ""}
         ${order.status === 1 && !adminMode ? `<button class="button danger-button" type="button" data-action="order-cancel" data-id="${order.id}">取消</button>` : ""}
-        ${adminMode && order.status === 2 ? `<button class="button success-button" type="button" data-action="order-accept" data-id="${order.id}">接单</button>` : ""}
-        ${adminMode && order.status === 5 ? `<button class="button success-button" type="button" data-action="order-delivery-start" data-id="${order.id}">配送</button>` : ""}
-        ${adminMode && order.status === 6 ? `<button class="button success-button" type="button" data-action="order-complete" data-id="${order.id}">完成</button>` : ""}
-        ${adminMode && (order.status === 2 || order.status === 5) ? `<button class="button warning-button" type="button" data-action="order-refund-start" data-id="${order.id}">模拟退款</button>` : ""}
-        ${adminMode && order.status === 7 ? `<button class="button warning-button" type="button" data-action="order-refund-complete" data-id="${order.id}">完成退款</button>` : ""}
+        ${adminMode && ["MERCHANT", "ADMIN"].includes(state.user?.role) && order.status === 2 ? `<button class="button success-button" type="button" data-action="order-accept" data-id="${order.id}">接单</button>` : ""}
+        ${adminMode && ["DELIVERY", "ADMIN"].includes(state.user?.role) && order.status === 5 ? `<button class="button success-button" type="button" data-action="order-delivery-start" data-id="${order.id}">配送</button>` : ""}
+        ${adminMode && ["DELIVERY", "ADMIN"].includes(state.user?.role) && order.status === 6 ? `<button class="button success-button" type="button" data-action="order-complete" data-id="${order.id}">完成</button>` : ""}
+        ${adminMode && isAdmin() && (order.status === 2 || order.status === 5) ? `<button class="button warning-button" type="button" data-action="order-refund-start" data-id="${order.id}">模拟退款</button>` : ""}
+        ${adminMode && isAdmin() && order.status === 7 ? `<button class="button warning-button" type="button" data-action="order-refund-complete" data-id="${order.id}">完成退款</button>` : ""}
       </div>
     </div>
   `).join("");
@@ -800,7 +842,7 @@ async function loadMenuDishes() {
 
 async function loadAdminDishes() {
   requireLogin();
-  if (!isAdmin()) return;
+  if (!canManageCatalog()) return;
   const page = await api("/dish/page?page=1&pageSize=100");
   state.adminDishes = page.records || [];
   renderAdminDishes();
@@ -817,7 +859,7 @@ async function loadOrders() {
   requireLogin();
   state.orders = (await api("/order/page?page=1&pageSize=100")).records || [];
   renderOrders($("#orderList"), false);
-  if (isAdmin()) {
+  if (isManagementRole()) {
     renderOrders($("#adminOrderList"), true);
     renderDashboard();
   }
@@ -832,9 +874,11 @@ async function refreshMenu() {
 }
 
 async function refreshAdmin() {
-  if (!isAdmin()) return;
+  if (!isManagementRole()) return;
   await loadCategories();
-  await loadAdminDishes();
+  if (canManageCatalog()) {
+    await loadAdminDishes();
+  }
   await loadOrders();
 }
 
@@ -845,7 +889,7 @@ async function startApp() {
   renderSession();
   if (!state.token) return;
   try {
-    if (isAdmin()) {
+    if (isManagementRole()) {
       switchAdminView("adminDashboardView");
       await refreshAdmin();
       return;
@@ -1280,7 +1324,7 @@ function bindEvents() {
 
       if (action === "order-detail") {
         const order = await api(`/order/${id}`);
-        if (isAdmin()) {
+        if (isManagementRole()) {
           await openModal({
             title: `订单 ${order.number}`,
             body: orderDetailHtml(order),

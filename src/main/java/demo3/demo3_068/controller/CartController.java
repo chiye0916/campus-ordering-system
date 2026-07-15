@@ -1,5 +1,6 @@
 package demo3.demo3_068.controller;
 
+import demo3.demo3_068.common.PermissionChecker;
 import demo3.demo3_068.common.Result;
 import demo3.demo3_068.dto.CartAddDTO;
 import demo3.demo3_068.dto.CartUpdateDTO;
@@ -29,29 +30,34 @@ public class CartController {
 
     @PostMapping("/add")
     public Result<Void> add(@Valid @RequestBody CartAddDTO cartAddDTO) {
+        PermissionChecker.requireUser();
         cartService.add(cartAddDTO);
         return Result.success();
     }
 
     @PutMapping("/update")
     public Result<Void> update(@Valid @RequestBody CartUpdateDTO cartUpdateDTO) {
+        PermissionChecker.requireUser();
         cartService.update(cartUpdateDTO);
         return Result.success();
     }
 
     @GetMapping("/list")
     public Result<List<CartVO>> list() {
+        PermissionChecker.requireUser();
         return Result.success(cartService.list());
     }
 
     @DeleteMapping("/clean")
     public Result<Void> clean() {
+        PermissionChecker.requireUser();
         cartService.clean();
         return Result.success();
     }
 
     @DeleteMapping("/{dishId}")
     public Result<Void> deleteByDishId(@PathVariable Long dishId) {
+        PermissionChecker.requireUser();
         cartService.deleteByDishId(dishId);
         return Result.success();
     }

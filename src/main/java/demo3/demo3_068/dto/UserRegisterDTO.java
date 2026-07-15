@@ -27,4 +27,6 @@ public class UserRegisterDTO {
 
     @Size(max = 64, message = "昵称不能超过64位")
     private String nickname;
+
+    private String role;
 }

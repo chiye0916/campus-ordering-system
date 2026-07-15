@@ -55,7 +55,7 @@
 - 已新增 `order_idempotency` 表，用 `(user_id, idempotency_key)` 唯一约束记录下单幂等状态
 - 已补充订单支付发起接口：`PUT /order/{id}/pay`
 - 已新增库存模块：`dish_stock` 保存可用/锁定库存，`stock_record` 保存 SET/LOCK/CONFIRM/RELEASE 库存流水
-- 已新增管理员库存接口：`GET /dish/{id}/stock`、`PUT /dish/{id}/stock`，设置字段为 `availableStock`
+- 已新增商家/管理员库存接口：`GET /dish/{id}/stock`、`PUT /dish/{id}/stock`，设置字段为 `availableStock`
 - 下单会先创建待支付订单获得 `order_id`，再按 dishId 聚合并升序锁库存、写 `LOCK` 流水；幂等重复返回原订单时不会重复锁库存
 - `PUT /order/{id}/pay` 只创建或复用 `MOCK`、`PAYING` 支付流水，返回 `tradeNo`，不更新订单为已支付，也不确认库存
 - 已新增 `POST /payment/mock/callback` 模拟第三方支付回调接口；成功回调才会把订单从待支付改为已支付并确认锁定库存、写 `CONFIRM` 流水
@@ -68,13 +68,19 @@
 - 超时取消复用 Redis 订单状态锁和数据库 `where status = PENDING_PAYMENT` 条件更新，状态更新成功后才释放库存
 - 自动超时释放库存会写 `RELEASE` 流水，operator 使用 `system_timeout` 系统审计用户，remark 为“订单超时自动取消释放库存”
 - `SYSTEM` 角色不会被当作普通管理员，且 `system_timeout` 不能通过正常登录 API 登录
+- 已细化角色边界：`USER`、`MERCHANT`、`DELIVERY`、`ADMIN`、`SYSTEM` 由 `Role` 枚举和 `PermissionChecker` 集中处理；未知角色在 JWT/权限解析时 fail closed，不会默认成任何有效角色
+- 公开注册只创建 `USER`，请求中携带 `role` 会被拒绝；`MERCHANT`、`DELIVERY`、`ADMIN` 本阶段通过 SQL 或测试 helper 创建
+- 客户端购物车、下单、发起模拟支付、待支付自取消只允许 `USER`；`/dish/list` 不新增角色限制
+- 分类、菜品、库存管理允许 `MERCHANT` 和 `ADMIN`；接单允许 `MERCHANT` 和 `ADMIN`；开始配送和完成订单允许 `DELIVERY` 和 `ADMIN`；内部模拟退款仍仅 `ADMIN`
+- 订单列表按工作台收敛：`USER` 看自己的全部状态订单，`MERCHANT` 看全局 `PAID`/`ACCEPTED`，`DELIVERY` 看全局 `ACCEPTED`/`DELIVERING`，`ADMIN` 看全部；`SYSTEM` 不允许普通 HTTP 可见性
+- 订单详情按角色历史范围收敛：`MERCHANT` 可看 `PAID`、`ACCEPTED`、`DELIVERING`、`COMPLETED`、`REFUNDING`、`REFUNDED`；`DELIVERY` 可看 `ACCEPTED`、`DELIVERING`、`COMPLETED`；退款操作仍不授予 `MERCHANT`
 - 已新增 Testcontainers 集成回归套件基础：`./mvnw test` 继续只跑快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 通过 Failsafe 运行 `*IT`，使用容器 MySQL、Redis（`GenericContainer` + `redis:7-alpine`）和轻量 RabbitMQ 上下文配置
 - 集成回归套件第一批覆盖三条关键链路：`/dish/list` Redis 缓存、下单幂等与库存锁定、支付回调幂等与库存确认；RabbitMQ 超时 TTL/DLX/监听重试/自动取消释放库存不在本阶段集成测试范围
 - 已整理接口联调文档：`docs/API_TEST.md`
 
 正在进行：
 
-- 当前没有 active change。
+- 正在实现 OpenSpec change `refine-roles-and-admin-permissions`，代码与单元测试已完成，等待最终 strict validate / integration 可用性验证。
 - 第七阶段 `add-testcontainers-regression-suite` 已实现、验证、同步主 specs 并归档。
 - 默认 `./mvnw test` 继续运行快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 显式运行 MySQL/Redis/RabbitMQ 容器支撑的 `*IT` 集成测试。
 - 后续可讨论第八阶段：日志、监控、压测 / 可靠性增强。
@@ -95,7 +101,7 @@
 - 下单缺少或空白 `Idempotency-Key` 返回 `code=400`；同用户同 key 同请求成功重试返回原 orderId；同 key 不同请求或处理中返回 `code=409`。
 - 下单 `request_hash` 基于 `userId`、`remark`、当前购物车内容按 `dishId` 排序后的 `dishId`、`quantity`、`dishPrice`，不包含 `Idempotency-Key`。
 - 库存独立于商品表，管理员必须单独初始化 `dish_stock`；未初始化库存的商品不能下单。
-- 管理员 SET 库存只设置 `available_stock`，不清空 `locked_stock`。
+- `MERCHANT` 或 `ADMIN` SET 库存只设置 `available_stock`，不清空 `locked_stock`。
 - 库存生命周期：SET 改 available；LOCK 使 available 减少且 locked 增加；CONFIRM 使 locked 减少且 available 不变；RELEASE 使 locked 减少且 available 增加。
 - 写库存流水前必须在同一事务中 `select ... for update` 读取库存行，同时保留 MySQL 条件更新保护。
 - 金额计算必须使用 `BigDecimal`，不能使用 `double`。
@@ -110,7 +116,7 @@
 - `payStatus=FAILED` 与 `process_status=FAILED` 不是同一概念；失败支付回调被成功接收并把支付流水改为失败时，回调记录可以是 `process_status=PROCESSED`。
 - `/dish/list` 保持先校验分类存在，再读分类维度缓存；缺失分类继续返回“分类不存在”，且不会读写商品列表缓存。
 - 商品列表缓存是加速层，不是数据源。Redis get/set/delete 失败只记录日志并继续业务；删除失败可能导致旧列表短暂可见，靠 TTL 最终清理。
-- 管理员库存 SET/查询不删除 `/dish/list` 缓存，因为当前 `DishVO` 列表响应不包含库存。
+- 商家/管理员库存 SET/查询不删除 `/dish/list` 缓存，因为当前 `DishVO` 列表响应不包含库存。
 
 ## 数据库信息
 
@@ -150,7 +156,7 @@
 - `待支付 -> 已取消`
 - `已支付/已接单 -> 模拟退款中 -> 模拟已退款`
 
-注意：订单状态数字大小不是生命周期顺序，业务判断必须使用 `OrderStatus` 状态机规则，不能用数字大小比较推导进度。当前 `ADMIN` 是第一版最大权限演示操作员，临时承担商家、配送、平台和内部模拟退款操作，不是最终商家角色；本阶段不做用户申请退款。
+注意：订单状态数字大小不是生命周期顺序，业务判断必须使用 `OrderStatus` 状态机规则，不能用数字大小比较推导进度。当前角色边界是轻量版本：`MERCHANT` 负责目录/库存/接单，`DELIVERY` 负责配送履约，`ADMIN` 作为平台兜底并保留内部模拟退款权限；本阶段不做用户申请退款。
 
 ## 接口列表
 
@@ -168,8 +174,8 @@
 - `GET /dish/list`：根据分类查询上架商品，使用 Redis 分类列表缓存
 - `PUT /dish/{id}`：修改商品
 - `PUT /dish/{id}/status`：商品上下架
-- `GET /dish/{id}/stock`：管理员查询商品库存
-- `PUT /dish/{id}/stock`：管理员设置商品可用库存，body 使用 `availableStock`
+- `GET /dish/{id}/stock`：商家或管理员查询商品库存
+- `PUT /dish/{id}/stock`：商家或管理员设置商品可用库存，body 使用 `availableStock`
 
 购物车接口：
 
@@ -185,9 +191,9 @@
 - `GET /order/page`：分页查询订单
 - `PUT /order/{id}/pay`：发起或复用模拟支付，返回 `tradeNo` 和 `PAYING` 状态
 - `PUT /order/{id}/cancel`：取消订单
-- `PUT /order/{id}/accept`：管理员接单
-- `PUT /order/{id}/delivery/start`：管理员开始配送
-- `PUT /order/{id}/complete`：管理员完成配送中订单
+- `PUT /order/{id}/accept`：商家或管理员接单
+- `PUT /order/{id}/delivery/start`：配送员或管理员开始配送
+- `PUT /order/{id}/complete`：配送员或管理员完成配送中订单
 - `PUT /order/{id}/refund/start`：管理员发起内部模拟退款
 - `PUT /order/{id}/refund/complete`：管理员完成内部模拟退款
 

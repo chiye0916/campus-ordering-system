@@ -18,6 +18,6 @@ public class OrderPageQueryDTO {
     private Integer pageSize;
 
     @Min(value = 1, message = "订单状态不合法")
-    @Max(value = 4, message = "订单状态不合法")
+    @Max(value = 8, message = "订单状态不合法")
     private Integer status;
 }

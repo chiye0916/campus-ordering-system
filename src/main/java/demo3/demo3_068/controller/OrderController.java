@@ -33,6 +33,7 @@ public class OrderController {
     @PostMapping("/submit")
     public Result<Long> submit(@Valid @RequestBody OrderSubmitDTO orderSubmitDTO,
                                @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        PermissionChecker.requireUser();
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new BusinessException(400, "Idempotency-Key 不能为空");
         }
@@ -51,32 +52,34 @@ public class OrderController {
 
     @PutMapping("/{id}/pay")
     public Result<OrderPayVO> pay(@PathVariable Long id) {
+        PermissionChecker.requireUser();
         return Result.success(orderService.pay(id));
     }
 
     @PutMapping("/{id}/cancel")
     public Result<Void> cancel(@PathVariable Long id) {
+        PermissionChecker.requireUser();
         orderService.cancel(id);
         return Result.success();
     }
 
     @PutMapping("/{id}/accept")
     public Result<Void> accept(@PathVariable Long id) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         orderService.accept(id);
         return Result.success();
     }
 
     @PutMapping("/{id}/delivery/start")
     public Result<Void> startDelivery(@PathVariable Long id) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireDeliveryOrAdmin();
         orderService.startDelivery(id);
         return Result.success();
     }
 
     @PutMapping("/{id}/complete")
     public Result<Void> complete(@PathVariable Long id) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireDeliveryOrAdmin();
         orderService.complete(id);
         return Result.success();
     }

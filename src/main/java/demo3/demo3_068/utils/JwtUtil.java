@@ -3,6 +3,7 @@ package demo3.demo3_068.utils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import demo3.demo3_068.exception.BusinessException;
+import demo3.demo3_068.model.Role;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -80,7 +81,7 @@ public class JwtUtil {
 
             Long userId = ((Number) payload.get("userId")).longValue();
             String username = String.valueOf(payload.get("username"));
-            String role = String.valueOf(payload.get("role"));
+            Role role = Role.parseForAuthentication(String.valueOf(payload.get("role")));
             return new JwtClaims(userId, username, role);
         } catch (BusinessException e) {
             throw e;
