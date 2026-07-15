@@ -49,7 +49,7 @@ public class DishStockServiceImpl implements DishStockService {
     @Override
     @Transactional
     public void setStock(Long dishId, DishStockSetDTO dishStockSetDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         Long operatorId = getCurrentUserIdOrThrow();
         Integer availableStock = dishStockSetDTO.getAvailableStock();
         if (availableStock == null || availableStock < 0) {

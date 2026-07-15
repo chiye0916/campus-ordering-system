@@ -2,6 +2,7 @@ package demo3.demo3_068.service.impl;
 
 import demo3.demo3_068.common.BaseContext;
 import demo3.demo3_068.dto.OrderSubmitDTO;
+import demo3.demo3_068.dto.OrderPageQueryDTO;
 import demo3.demo3_068.entity.Dish;
 import demo3.demo3_068.entity.OrderIdempotency;
 import demo3.demo3_068.entity.OrderDetail;
@@ -20,6 +21,7 @@ import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.common.RedisDistributedLock;
 import demo3.demo3_068.model.PaymentStatus;
+import demo3.demo3_068.model.Role;
 import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
@@ -90,6 +92,7 @@ class OrderServiceImplTest {
                 orderTimeoutOutboxService,
                 businessMetrics);
         BaseContext.setCurrentUserId(7L);
+        BaseContext.setCurrentUserRole(Role.USER);
     }
 
     @AfterEach
@@ -298,6 +301,120 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void nonUserCannotInitiateCustomerPayment() {
+        BaseContext.setCurrentUserRole(Role.ADMIN);
+
+        assertThatThrownBy(() -> orderService.pay(101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(403);
+        verify(redisDistributedLock, never()).tryLock(any(), any(), any());
+    }
+
+    @Test
+    void merchantCanAcceptPaidOrderButUserCannot() {
+        Orders orders = pendingOrder();
+        orders.setStatus(OrderStatus.PAID.getCode());
+        BaseContext.setCurrentUserRole(Role.MERCHANT);
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(ordersMapper.updateStatusById(101L, OrderStatus.PAID.getCode(), OrderStatus.ACCEPTED.getCode())).thenReturn(1);
+
+        orderService.accept(101L);
+
+        verify(ordersMapper).updateStatusById(101L, OrderStatus.PAID.getCode(), OrderStatus.ACCEPTED.getCode());
+
+        BaseContext.setCurrentUserRole(Role.USER);
+        assertThatThrownBy(() -> orderService.accept(101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(403);
+    }
+
+    @Test
+    void deliveryCanStartAndCompleteWhileMerchantCannot() {
+        BaseContext.setCurrentUserRole(Role.DELIVERY);
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        Orders accepted = pendingOrder();
+        accepted.setStatus(OrderStatus.ACCEPTED.getCode());
+        when(ordersMapper.selectById(101L)).thenReturn(accepted);
+        when(ordersMapper.updateStatusById(101L, OrderStatus.ACCEPTED.getCode(), OrderStatus.DELIVERING.getCode())).thenReturn(1);
+
+        orderService.startDelivery(101L);
+
+        verify(ordersMapper).updateStatusById(101L, OrderStatus.ACCEPTED.getCode(), OrderStatus.DELIVERING.getCode());
+
+        BaseContext.setCurrentUserRole(Role.MERCHANT);
+        assertThatThrownBy(() -> orderService.complete(101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(403);
+    }
+
+    @Test
+    void adminCanRefundButMerchantCannot() {
+        Orders paid = pendingOrder();
+        paid.setStatus(OrderStatus.PAID.getCode());
+        BaseContext.setCurrentUserRole(Role.ADMIN);
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        when(ordersMapper.selectById(101L)).thenReturn(paid);
+        when(ordersMapper.updateStatusById(101L, OrderStatus.PAID.getCode(), OrderStatus.REFUNDING.getCode())).thenReturn(1);
+
+        orderService.startRefund(101L);
+
+        verify(ordersMapper).updateStatusById(101L, OrderStatus.PAID.getCode(), OrderStatus.REFUNDING.getCode());
+
+        BaseContext.setCurrentUserRole(Role.MERCHANT);
+        assertThatThrownBy(() -> orderService.startRefund(101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(403);
+    }
+
+    @Test
+    void pageVisibilityUsesRoleSpecificScopes() {
+        BaseContext.setCurrentUserRole(Role.MERCHANT);
+        OrderPageQueryDTO query = pageQuery(null);
+        when(ordersMapper.countPage(eq(null), eq(List.of(OrderStatus.PAID.getCode(), OrderStatus.ACCEPTED.getCode())), eq(query)))
+                .thenReturn(0L);
+        when(ordersMapper.selectPage(eq(null), eq(List.of(OrderStatus.PAID.getCode(), OrderStatus.ACCEPTED.getCode())), eq(query), eq(0), eq(10)))
+                .thenReturn(List.of());
+
+        orderService.page(query);
+
+        verify(ordersMapper).countPage(eq(null), eq(List.of(OrderStatus.PAID.getCode(), OrderStatus.ACCEPTED.getCode())), eq(query));
+    }
+
+    @Test
+    void merchantCannotSeePendingPaymentDetailButCanSeeRefundingDetail() {
+        BaseContext.setCurrentUserRole(Role.MERCHANT);
+        Orders pending = pendingOrder();
+        when(ordersMapper.selectById(101L)).thenReturn(pending);
+
+        assertThatThrownBy(() -> orderService.getDetail(101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(403);
+
+        Orders refunding = pendingOrder();
+        refunding.setStatus(OrderStatus.REFUNDING.getCode());
+        when(ordersMapper.selectById(102L)).thenReturn(refunding);
+        when(orderDetailMapper.selectByOrderId(102L)).thenReturn(List.of());
+
+        assertThat(orderService.getDetail(102L).getStatus()).isEqualTo(OrderStatus.REFUNDING.getCode());
+    }
+
+    @Test
+    void systemCannotListOrders() {
+        BaseContext.setCurrentUserRole(Role.SYSTEM);
+
+        assertThatThrownBy(() -> orderService.page(pageQuery(null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(403);
+    }
+
+    @Test
     void payReusesExistingPayingRecord() {
         Orders orders = pendingOrder();
         PaymentRecord existing = paymentRecord("PAY202607090001", PaymentStatus.PAYING);
@@ -444,6 +561,14 @@ class OrderServiceImplTest {
         OrderSubmitDTO dto = new OrderSubmitDTO();
         dto.setRemark(remark);
         return dto;
+    }
+
+    private OrderPageQueryDTO pageQuery(Integer status) {
+        OrderPageQueryDTO query = new OrderPageQueryDTO();
+        query.setPage(1);
+        query.setPageSize(10);
+        query.setStatus(status);
+        return query;
     }
 
     private ShoppingCart cartItem(Long dishId, String dishPrice, int quantity) {

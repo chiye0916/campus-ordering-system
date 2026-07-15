@@ -38,13 +38,13 @@ public class DishController {
 
     @PostMapping
     public Result<Long> create(@Valid @RequestBody DishCreateDTO dishCreateDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         return Result.success(dishService.create(dishCreateDTO));
     }
 
     @GetMapping("/page")
     public Result<PageResult<DishVO>> page(@Valid DishPageQueryDTO dishPageQueryDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         return Result.success(dishService.page(dishPageQueryDTO));
     }
 
@@ -56,7 +56,7 @@ public class DishController {
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id,
                                @Valid @RequestBody DishUpdateDTO dishUpdateDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         dishService.update(id, dishUpdateDTO);
         return Result.success();
     }
@@ -64,21 +64,21 @@ public class DishController {
     @PutMapping("/{id}/status")
     public Result<Void> updateStatus(@PathVariable Long id,
                                      @Valid @RequestBody DishStatusDTO dishStatusDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         dishService.updateStatus(id, dishStatusDTO);
         return Result.success();
     }
 
     @GetMapping("/{id}/stock")
     public Result<DishStockVO> getStock(@PathVariable Long id) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         return Result.success(dishStockService.getStock(id));
     }
 
     @PutMapping("/{id}/stock")
     public Result<Void> setStock(@PathVariable Long id,
                                  @Valid @RequestBody DishStockSetDTO dishStockSetDTO) {
-        PermissionChecker.requireAdmin();
+        PermissionChecker.requireMerchantOrAdmin();
         dishStockService.setStock(id, dishStockSetDTO);
         return Result.success();
     }

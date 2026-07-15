@@ -33,6 +33,12 @@
             <if test="query.status != null">
                 and status = #{query.status}
             </if>
+            <if test="query.status == null and visibleStatusCodes != null and visibleStatusCodes.size() > 0">
+                and status in
+                <foreach collection="visibleStatusCodes" item="statusCode" open="(" separator="," close=")">
+                    #{statusCode}
+                </foreach>
+            </if>
         </where>
         order by order_time desc, id desc
         limit #{offset}, #{pageSize}
@@ -47,6 +53,12 @@
             </if>
             <if test="query.status != null">
                 and status = #{query.status}
+            </if>
+            <if test="query.status == null and visibleStatusCodes != null and visibleStatusCodes.size() > 0">
+                and status in
+                <foreach collection="visibleStatusCodes" item="statusCode" open="(" separator="," close=")">
+                    #{statusCode}
+                </foreach>
             </if>
         </where>
     </select>

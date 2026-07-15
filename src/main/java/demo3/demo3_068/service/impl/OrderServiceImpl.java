@@ -24,6 +24,7 @@ import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
 import demo3.demo3_068.model.PaymentStatus;
+import demo3.demo3_068.model.Role;
 import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.observability.TraceContext;
 import demo3.demo3_068.service.DishStockService;
@@ -52,6 +53,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -105,6 +107,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public Long submit(OrderSubmitDTO orderSubmitDTO, String idempotencyKey) {
+        PermissionChecker.requireUser();
         Long userId = getCurrentUserIdOrThrow();
         String normalizedKey = idempotencyKey.trim();
         Long orderId = null;
@@ -203,9 +206,13 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public PageResult<OrderVO> page(OrderPageQueryDTO orderPageQueryDTO) {
         Long userId = getQueryUserId();
+        List<Integer> visibleStatusCodes = getVisibleListStatusCodes();
+        if (isRequestedStatusOutsideScope(orderPageQueryDTO, visibleStatusCodes)) {
+            return new PageResult<>(0L, List.of());
+        }
         int offset = (orderPageQueryDTO.getPage() - 1) * orderPageQueryDTO.getPageSize();
-        long total = ordersMapper.countPage(userId, orderPageQueryDTO);
-        List<OrderVO> records = ordersMapper.selectPage(userId, orderPageQueryDTO, offset, orderPageQueryDTO.getPageSize())
+        long total = ordersMapper.countPage(userId, visibleStatusCodes, orderPageQueryDTO);
+        List<OrderVO> records = ordersMapper.selectPage(userId, visibleStatusCodes, orderPageQueryDTO, offset, orderPageQueryDTO.getPageSize())
                 .stream()
                 .map(this::toOrderVO)
                 .toList();
@@ -215,6 +222,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public OrderPayVO pay(Long id) {
+        PermissionChecker.requireUser();
         return executeWithOrderStatusLock(id, () -> {
             Orders orders = getOwnOrderOrThrow(id);
             OrderStatus oldStatus = OrderStatus.fromCode(orders.getStatus());
@@ -247,6 +255,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void cancel(Long id) {
+        PermissionChecker.requireUser();
         executeWithOrderStatusLock(id, () -> {
             Orders orders = getOwnOrderOrThrow(id);
             OrderStatus oldStatus = requireTransition(orders, OrderStatus.CANCELLED, "只有待支付订单才能取消");
@@ -268,21 +277,21 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void accept(Long id) {
-        requireAdminSuperOperator();
+        PermissionChecker.requireMerchantOrAdmin();
         executeStatusOnlyTransition(id, OrderStatus.ACCEPTED, this::getOrderOrThrow, "只有已支付订单才能接单");
     }
 
     @Override
     @Transactional
     public void startDelivery(Long id) {
-        requireAdminSuperOperator();
+        PermissionChecker.requireDeliveryOrAdmin();
         executeStatusOnlyTransition(id, OrderStatus.DELIVERING, this::getOrderOrThrow, "只有已接单订单才能开始配送");
     }
 
     @Override
     @Transactional
     public void complete(Long id) {
-        requireAdminSuperOperator();
+        PermissionChecker.requireDeliveryOrAdmin();
         executeTimestampTransition(
                 id,
                 OrderStatus.COMPLETED,
@@ -295,7 +304,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void startRefund(Long id) {
-        requireAdminSuperOperator();
+        PermissionChecker.requireAdmin();
         executeStatusOnlyTransition(
                 id,
                 OrderStatus.REFUNDING,
@@ -306,7 +315,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void completeRefund(Long id) {
-        requireAdminSuperOperator();
+        PermissionChecker.requireAdmin();
         executeStatusOnlyTransition(
                 id,
                 OrderStatus.REFUNDED,
@@ -373,14 +382,26 @@ public class OrderServiceImpl implements OrderService {
 
     private Orders getVisibleOrderOrThrow(Long id) {
         Orders orders = getOrderOrThrow(id);
-        if (isAdmin()) {
+        Role role = PermissionChecker.currentRoleOrThrow();
+        OrderStatus status = OrderStatus.fromCode(orders.getStatus());
+        if (role == Role.ADMIN) {
             return orders;
         }
-        Long userId = getCurrentUserIdOrThrow();
-        if (!userId.equals(orders.getUserId())) {
+        if (role == Role.USER) {
+            Long userId = getCurrentUserIdOrThrow();
+            if (userId.equals(orders.getUserId())) {
+                return orders;
+            }
             throw new BusinessException(404, "订单不存在");
         }
-        return orders;
+        if (role == Role.MERCHANT && merchantDetailStatuses().contains(status)) {
+            return orders;
+        }
+        if (role == Role.DELIVERY && deliveryDetailStatuses().contains(status)) {
+            return orders;
+        }
+        PermissionChecker.throwPermissionDenied();
+        return null;
     }
 
     private Orders getOrderOrThrow(Long id) {
@@ -392,17 +413,56 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private Long getQueryUserId() {
-        Long userId = getCurrentUserIdOrThrow();
-        return isAdmin() ? null : userId;
+        Role role = PermissionChecker.currentRoleOrThrow();
+        if (role == Role.USER) {
+            return getCurrentUserIdOrThrow();
+        }
+        if (role == Role.MERCHANT || role == Role.DELIVERY || role == Role.ADMIN) {
+            return null;
+        }
+        PermissionChecker.throwPermissionDenied();
+        return null;
     }
 
-    private boolean isAdmin() {
-        return Constants.ADMIN_USER_ROLE.equals(BaseContext.getCurrentUserRole());
+    private List<Integer> getVisibleListStatusCodes() {
+        Role role = PermissionChecker.currentRoleOrThrow();
+        if (role == Role.MERCHANT) {
+            return statusCodes(OrderStatus.PAID, OrderStatus.ACCEPTED);
+        }
+        if (role == Role.DELIVERY) {
+            return statusCodes(OrderStatus.ACCEPTED, OrderStatus.DELIVERING);
+        }
+        if (role == Role.USER || role == Role.ADMIN) {
+            return null;
+        }
+        PermissionChecker.throwPermissionDenied();
+        return List.of();
     }
 
-    private void requireAdminSuperOperator() {
-        // ADMIN is the first-version maximum-permission demo operator, not the final merchant role.
-        PermissionChecker.requireAdmin();
+    private boolean isRequestedStatusOutsideScope(OrderPageQueryDTO query, List<Integer> visibleStatusCodes) {
+        return query.getStatus() != null
+                && visibleStatusCodes != null
+                && !visibleStatusCodes.contains(query.getStatus());
+    }
+
+    private List<Integer> statusCodes(OrderStatus... statuses) {
+        return java.util.Arrays.stream(statuses)
+                .map(OrderStatus::getCode)
+                .toList();
+    }
+
+    private Set<OrderStatus> merchantDetailStatuses() {
+        return Set.of(
+                OrderStatus.PAID,
+                OrderStatus.ACCEPTED,
+                OrderStatus.DELIVERING,
+                OrderStatus.COMPLETED,
+                OrderStatus.REFUNDING,
+                OrderStatus.REFUNDED);
+    }
+
+    private Set<OrderStatus> deliveryDetailStatuses() {
+        return Set.of(OrderStatus.ACCEPTED, OrderStatus.DELIVERING, OrderStatus.COMPLETED);
     }
 
     private Long getCurrentUserIdOrThrow() {
