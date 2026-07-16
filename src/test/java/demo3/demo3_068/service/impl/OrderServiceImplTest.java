@@ -21,11 +21,13 @@ import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.model.OrderStatusChangeOperation;
 import demo3.demo3_068.common.RedisDistributedLock;
 import demo3.demo3_068.model.PaymentStatus;
 import demo3.demo3_068.model.Role;
 import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.service.DishStockService;
+import demo3.demo3_068.service.OrderStatusHistoryService;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
 import demo3.demo3_068.vo.OrderPayVO;
 import org.junit.jupiter.api.AfterEach;
@@ -77,6 +79,8 @@ class OrderServiceImplTest {
     @Mock
     private OrderTimeoutOutboxService orderTimeoutOutboxService;
     @Mock
+    private OrderStatusHistoryService orderStatusHistoryService;
+    @Mock
     private BusinessMetrics businessMetrics;
 
     private OrderServiceImpl orderService;
@@ -95,6 +99,7 @@ class OrderServiceImplTest {
                 redisDistributedLock,
                 dishStockService,
                 orderTimeoutOutboxService,
+                orderStatusHistoryService,
                 businessMetrics);
         BaseContext.setCurrentUserId(7L);
         BaseContext.setCurrentUserRole(Role.USER);
@@ -162,6 +167,8 @@ class OrderServiceImplTest {
         verify(orderIdempotencyMapper).markSucceeded(eq(55L), eq(101L), eq(OrderIdempotencyStatus.SUCCEEDED.getCode()), any());
         verify(dishStockService).lockStock(101L, Map.of(1L, 2), 7L);
         verify(orderTimeoutOutboxService).createPendingForOrder(101L);
+        verify(orderStatusHistoryService).recordChange(any(Orders.class), eq(null), eq(OrderStatus.PENDING_PAYMENT),
+                eq(OrderStatusChangeOperation.ORDER_SUBMIT), eq(7L), eq(Role.USER), eq(null));
     }
 
     @Test
@@ -180,6 +187,7 @@ class OrderServiceImplTest {
         verify(shoppingCartMapper, never()).deleteByUserId(any());
         verify(dishStockService, never()).lockStock(any(), any(), any());
         verify(orderTimeoutOutboxService, never()).createPendingForOrder(any());
+        verify(orderStatusHistoryService, never()).recordChange(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -328,6 +336,8 @@ class OrderServiceImplTest {
         orderService.accept(101L);
 
         verify(ordersMapper).updateStatusById(101L, OrderStatus.PAID.getCode(), OrderStatus.ACCEPTED.getCode());
+        verify(orderStatusHistoryService).recordChange(eq(orders), eq(OrderStatus.PAID.getCode()), eq(OrderStatus.ACCEPTED),
+                eq(OrderStatusChangeOperation.MERCHANT_ACCEPT), eq(7L), eq(Role.MERCHANT), eq(null));
 
         BaseContext.setCurrentUserRole(Role.USER);
         assertThatThrownBy(() -> orderService.accept(101L))
@@ -348,12 +358,30 @@ class OrderServiceImplTest {
         orderService.startDelivery(101L);
 
         verify(ordersMapper).updateStatusById(101L, OrderStatus.ACCEPTED.getCode(), OrderStatus.DELIVERING.getCode());
+        verify(orderStatusHistoryService).recordChange(eq(accepted), eq(OrderStatus.ACCEPTED.getCode()), eq(OrderStatus.DELIVERING),
+                eq(OrderStatusChangeOperation.DELIVERY_START), eq(7L), eq(Role.DELIVERY), eq(null));
 
         BaseContext.setCurrentUserRole(Role.MERCHANT);
         assertThatThrownBy(() -> orderService.complete(101L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(403);
+    }
+
+    @Test
+    void deliveryCompleteWritesHistory() {
+        BaseContext.setCurrentUserRole(Role.DELIVERY);
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        Orders delivering = pendingOrder();
+        delivering.setStatus(OrderStatus.DELIVERING.getCode());
+        when(ordersMapper.selectById(101L)).thenReturn(delivering);
+        when(ordersMapper.updateToCompletedById(eq(101L), any(), eq(OrderStatus.DELIVERING.getCode()), eq(OrderStatus.COMPLETED.getCode())))
+                .thenReturn(1);
+
+        orderService.complete(101L);
+
+        verify(orderStatusHistoryService).recordChange(eq(delivering), eq(OrderStatus.DELIVERING.getCode()), eq(OrderStatus.COMPLETED),
+                eq(OrderStatusChangeOperation.DELIVERY_COMPLETE), eq(7L), eq(Role.DELIVERY), eq(null));
     }
 
     @Test
@@ -368,12 +396,29 @@ class OrderServiceImplTest {
         orderService.startRefund(101L);
 
         verify(ordersMapper).updateStatusById(101L, OrderStatus.PAID.getCode(), OrderStatus.REFUNDING.getCode());
+        verify(orderStatusHistoryService).recordChange(eq(paid), eq(OrderStatus.PAID.getCode()), eq(OrderStatus.REFUNDING),
+                eq(OrderStatusChangeOperation.INTERNAL_REFUND_START), eq(7L), eq(Role.ADMIN), eq(null));
 
         BaseContext.setCurrentUserRole(Role.MERCHANT);
         assertThatThrownBy(() -> orderService.startRefund(101L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(403);
+    }
+
+    @Test
+    void adminCanCompleteInternalRefundWithHistory() {
+        BaseContext.setCurrentUserRole(Role.ADMIN);
+        when(redisDistributedLock.tryLock(startsWith("lock:order:status:"), any(), any(Duration.class))).thenReturn(true);
+        Orders refunding = pendingOrder();
+        refunding.setStatus(OrderStatus.REFUNDING.getCode());
+        when(ordersMapper.selectById(101L)).thenReturn(refunding);
+        when(ordersMapper.updateStatusById(101L, OrderStatus.REFUNDING.getCode(), OrderStatus.REFUNDED.getCode())).thenReturn(1);
+
+        orderService.completeRefund(101L);
+
+        verify(orderStatusHistoryService).recordChange(eq(refunding), eq(OrderStatus.REFUNDING.getCode()), eq(OrderStatus.REFUNDED),
+                eq(OrderStatusChangeOperation.INTERNAL_REFUND_COMPLETE), eq(7L), eq(Role.ADMIN), eq(null));
     }
 
     @Test
@@ -436,6 +481,21 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void statusHistoryReusesOrderDetailVisibilityAndReturnsEmptyList() {
+        Orders orders = pendingOrder();
+        when(ordersMapper.selectById(101L)).thenReturn(orders);
+        when(orderStatusHistoryService.listByOrderId(101L)).thenReturn(List.of());
+
+        assertThat(orderService.getStatusHistory(101L)).isEmpty();
+
+        BaseContext.setCurrentUserRole(Role.SYSTEM);
+        assertThatThrownBy(() -> orderService.getStatusHistory(101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(403);
+    }
+
+    @Test
     void payReusesExistingPayingRecord() {
         Orders orders = pendingOrder();
         PaymentRecord existing = paymentRecord("PAY202607090001", PaymentStatus.PAYING);
@@ -492,6 +552,8 @@ class OrderServiceImplTest {
         verify(dishStockService).releaseLockedStock(101L, Map.of(1L, 1, 2L, 2), 7L);
         verify(paymentRecordMapper).closeCurrentPayingMockByOrderId(
                 eq(101L), eq("MOCK"), eq(PaymentStatus.PAYING.getCode()), eq(PaymentStatus.CLOSED.getCode()), any());
+        verify(orderStatusHistoryService).recordChange(eq(orders), eq(OrderStatus.PENDING_PAYMENT.getCode()), eq(OrderStatus.CANCELLED),
+                eq(OrderStatusChangeOperation.USER_CANCEL), eq(7L), eq(Role.USER), eq(null));
     }
 
     @Test
@@ -506,6 +568,7 @@ class OrderServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("订单状态已变化，请刷新后重试");
         verify(dishStockService, never()).releaseLockedStock(any(), any(), any());
+        verify(orderStatusHistoryService, never()).recordChange(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -529,6 +592,8 @@ class OrderServiceImplTest {
                 "订单超时自动取消释放库存");
         verify(paymentRecordMapper).closeCurrentPayingMockByOrderId(
                 eq(101L), eq("MOCK"), eq(PaymentStatus.PAYING.getCode()), eq(PaymentStatus.CLOSED.getCode()), any());
+        verify(orderStatusHistoryService).recordSystemChange(eq(orders), eq(OrderStatus.PENDING_PAYMENT.getCode()),
+                eq(OrderStatus.CANCELLED), eq(OrderStatusChangeOperation.TIMEOUT_CANCEL), eq(null));
     }
 
     @Test
@@ -542,6 +607,7 @@ class OrderServiceImplTest {
 
         verify(ordersMapper, never()).updateToCancelledById(any(), any(), any(), any());
         verify(dishStockService, never()).releaseLockedStock(any(), any(), any(), any());
+        verify(orderStatusHistoryService, never()).recordSystemChange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -553,6 +619,7 @@ class OrderServiceImplTest {
 
         verify(ordersMapper, never()).updateToCancelledById(any(), any(), any(), any());
         verify(dishStockService, never()).releaseLockedStock(any(), any(), any(), any());
+        verify(orderStatusHistoryService, never()).recordSystemChange(any(), any(), any(), any(), any());
     }
 
     @Test

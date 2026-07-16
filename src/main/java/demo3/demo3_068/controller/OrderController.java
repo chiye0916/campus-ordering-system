@@ -9,6 +9,7 @@ import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.service.OrderService;
 import demo3.demo3_068.vo.OrderDetailVO;
 import demo3.demo3_068.vo.OrderPayVO;
+import demo3.demo3_068.vo.OrderStatusHistoryVO;
 import demo3.demo3_068.vo.OrderVO;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -43,6 +44,11 @@ public class OrderController {
     @GetMapping("/{id}")
     public Result<OrderDetailVO> getDetail(@PathVariable Long id) {
         return Result.success(orderService.getDetail(id));
+    }
+
+    @GetMapping("/{id}/status-history")
+    public Result<java.util.List<OrderStatusHistoryVO>> getStatusHistory(@PathVariable Long id) {
+        return Result.success(orderService.getStatusHistory(id));
     }
 
     @GetMapping("/page")

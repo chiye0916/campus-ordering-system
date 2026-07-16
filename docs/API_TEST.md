@@ -161,6 +161,27 @@ WHERE NOT EXISTS (
 alter table order_timeout_outbox add column trace_id varchar(64) null after message_id;
 ```
 
+如果你的数据库是在订单状态历史审计功能之前创建的，需要补 `order_status_history` 表：
+
+```sql
+CREATE TABLE IF NOT EXISTS order_status_history (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    order_id BIGINT NOT NULL,
+    order_number VARCHAR(64) NOT NULL,
+    user_id BIGINT NOT NULL,
+    old_status TINYINT,
+    new_status TINYINT NOT NULL,
+    operation VARCHAR(64) NOT NULL,
+    operator_id BIGINT,
+    operator_role VARCHAR(32) NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    trace_id VARCHAR(64),
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_order_status_history_order_id_create_time_id (order_id, create_time, id),
+    KEY idx_order_status_history_trace_id (trace_id)
+);
+```
+
 如果你的数据库是在支付回调幂等功能之前创建的，需要补 `payment_callback_record` 表：
 
 ```sql
@@ -626,6 +647,36 @@ stock_record 不会新增第二条 LOCK
 ```bash
 curl "$BASE_URL/order/$ORDER_ID" \
   -H "Authorization: Bearer $USER_TOKEN"
+```
+
+查询订单状态历史时间线。可见性和订单详情一致：普通用户只能看自己的订单，商家/配送员按订单详情范围可见，管理员可看全部，`SYSTEM` 不允许走普通 HTTP 查询。老订单没有历史记录时返回空列表：
+
+```bash
+curl "$BASE_URL/order/$ORDER_ID/status-history" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+新提交成功的订单至少会有一条 `ORDER_SUBMIT`，`oldStatus=null`、`newStatus=1`。后续成功状态流转按时间和 id 升序返回，例如支付成功、接单、开始配送、完成订单：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "orderId": 1,
+      "oldStatus": null,
+      "oldStatusLabel": null,
+      "newStatus": 1,
+      "newStatusLabel": "待支付",
+      "operation": "ORDER_SUBMIT",
+      "operationText": "订单创建，进入待支付状态",
+      "operatorRole": "USER",
+      "reason": "订单创建，进入待支付状态",
+      "traceId": "local_trace-001"
+    }
+  ]
+}
 ```
 
 普通用户分页查询自己的订单：
