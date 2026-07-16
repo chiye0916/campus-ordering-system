@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.RefundRequestMapper">
+
+    <resultMap id="RefundRequestResultMap" type="demo3.demo3_068.entity.RefundRequest">
+        <id column="id" property="id"/>
+        <result column="refund_no" property="refundNo"/>
+        <result column="order_id" property="orderId"/>
+        <result column="user_id" property="userId"/>
+        <result column="order_number" property="orderNumber"/>
+        <result column="amount" property="amount"/>
+        <result column="reason" property="reason"/>
+        <result column="status" property="status"/>
+        <result column="reject_reason" property="rejectReason"/>
+        <result column="reviewer_id" property="reviewerId"/>
+        <result column="review_time" property="reviewTime"/>
+        <result column="complete_time" property="completeTime"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <sql id="BaseColumns">
+        id, refund_no, order_id, user_id, order_number, amount, reason, status,
+        reject_reason, reviewer_id, review_time, complete_time, create_time, update_time
+    </sql>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.RefundRequest"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into refund_request (
+            refund_no, order_id, user_id, order_number, amount, reason, status,
+            reject_reason, reviewer_id, review_time, complete_time, create_time, update_time
+        )
+        values (
+            #{refundNo}, #{orderId}, #{userId}, #{orderNumber}, #{amount}, #{reason}, #{status},
+            #{rejectReason}, #{reviewerId}, #{reviewTime}, #{completeTime}, #{createTime}, #{updateTime}
+        )
+    </insert>
+
+    <select id="selectById" resultMap="RefundRequestResultMap">
+        select <include refid="BaseColumns"/>
+        from refund_request
+        where id = #{id}
+    </select>
+
+    <select id="selectByOrderId" resultMap="RefundRequestResultMap">
+        select <include refid="BaseColumns"/>
+        from refund_request
+        where order_id = #{orderId}
+    </select>
+
+    <select id="countPage" resultType="long">
+        select count(*)
+        from refund_request
+        <where>
+            <if test="userId != null">
+                user_id = #{userId}
+            </if>
+            <if test="status != null">
+                and status = #{status}
+            </if>
+        </where>
+    </select>
+
+    <select id="selectPage" resultMap="RefundRequestResultMap">
+        select <include refid="BaseColumns"/>
+        from refund_request
+        <where>
+            <if test="userId != null">
+                user_id = #{userId}
+            </if>
+            <if test="status != null">
+                and status = #{status}
+            </if>
+        </where>
+        order by create_time desc, id desc
+        limit #{offset}, #{pageSize}
+    </select>
+
+    <update id="approvePending">
+        update refund_request
+        set status = #{newStatus},
+            reviewer_id = #{reviewerId},
+            review_time = #{reviewTime},
+            update_time = #{updateTime}
+        where id = #{id}
+          and status = #{oldStatus}
+    </update>
+
+    <update id="rejectPending">
+        update refund_request
+        set status = #{newStatus},
+            reviewer_id = #{reviewerId},
+            review_time = #{reviewTime},
+            reject_reason = #{rejectReason},
+            update_time = #{updateTime}
+        where id = #{id}
+          and status = #{oldStatus}
+    </update>
+
+    <update id="completeApproved">
+        update refund_request
+        set status = #{newStatus},
+            complete_time = #{completeTime},
+            update_time = #{updateTime}
+        where id = #{id}
+          and status = #{oldStatus}
+    </update>
+</mapper>

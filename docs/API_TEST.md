@@ -16,7 +16,7 @@
 ./mvnw verify -Pintegration-test
 ```
 
-集成回归测试显式运行 `*IT`，会通过 Testcontainers 启动 MySQL、Redis 和轻量 RabbitMQ 测试容器，因此需要 Docker。当前集成套件覆盖 `/dish/list` 缓存、下单幂等/库存锁定、支付回调幂等/库存确认三条关键链路；RabbitMQ 在本阶段只用于应用上下文和配置连通性，不等待 TTL/DLX 超时取消链路。
+集成回归测试显式运行 `*IT`，会通过 Testcontainers 启动 MySQL、Redis 和轻量 RabbitMQ 测试容器，因此需要 Docker。当前集成套件覆盖 `/dish/list` 缓存、下单幂等/库存锁定、支付回调幂等/库存确认、用户退款申请到管理员完成退款链路；RabbitMQ 在本阶段只用于应用上下文和配置连通性，不等待 TTL/DLX 超时取消链路。
 
 确认 MySQL、Redis 容器正在运行：
 
@@ -274,10 +274,10 @@ DELIVERY_TOKEN="把 delivery 登录返回的 token 粘贴到这里"
 
 | 角色 | 允许 |
 | --- | --- |
-| `USER` | 购物车、下单、发起模拟支付、待支付自取消、查看自己的订单 |
+| `USER` | 购物车、下单、发起模拟支付、待支付自取消、查看自己的订单、为自己的已支付/已接单订单申请退款 |
 | `MERCHANT` | 分类/菜品/库存管理、接单、查看已支付/已接单订单列表，查看商家相关详情 |
 | `DELIVERY` | 开始配送、完成配送中订单、查看已接单/配送中订单列表，查看配送相关详情 |
-| `ADMIN` | 管理、履约兜底、全部订单可见、内部模拟退款 |
+| `ADMIN` | 管理、履约兜底、全部订单可见、审核并完成退款申请、内部模拟退款兜底 |
 | `SYSTEM` | 仅内部审计；不能正常登录，也不能通过普通 HTTP 权限 |
 
 验证两个身份：
@@ -792,7 +792,7 @@ group by change_type;
 CONFIRM 仍然只有 1 条
 ```
 
-已支付订单不能直接取消；本阶段没有用户申请退款接口，只支持管理员内部模拟退款：
+已支付订单不能直接取消；用户如需退款应走 `/refund/...` 申请流程：
 
 ```bash
 curl -X PUT "$BASE_URL/order/$ORDER_ID/cancel" \
@@ -805,6 +805,61 @@ curl -X PUT "$BASE_URL/order/$ORDER_ID/cancel" \
 code=409
 message=只有待支付订单才能取消
 ```
+
+### 用户退款申请推荐流程
+
+普通用户为自己的已支付或已接单订单创建退款申请。请求体只允许业务输入 `orderId` 和 `reason`，退款单号与退款金额由服务端从订单生成和快照：
+
+```bash
+curl -X POST "$BASE_URL/refund/request" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d "{\"orderId\":$ORDER_ID,\"reason\":\"不想要了\"}"
+```
+
+复制返回的 `data`：
+
+```bash
+REFUND_REQUEST_ID="把退款申请返回的 data 粘贴到这里"
+```
+
+用户查看自己的退款申请列表和详情：
+
+```bash
+curl "$BASE_URL/refund/my/page?page=1&pageSize=10&status=PENDING_REVIEW" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+curl "$BASE_URL/refund/$REFUND_REQUEST_ID" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+管理员查看全部退款申请，审核通过后订单进入 `7` 模拟退款中：
+
+```bash
+curl "$BASE_URL/refund/page?page=1&pageSize=10" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+curl -X PUT "$BASE_URL/refund/$REFUND_REQUEST_ID/approve" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+管理员完成模拟退款后，退款申请变为 `COMPLETED`，订单进入 `8` 模拟已退款：
+
+```bash
+curl -X PUT "$BASE_URL/refund/$REFUND_REQUEST_ID/complete" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+管理员也可以拒绝待审核申请，拒绝不会改变订单状态：
+
+```bash
+curl -X PUT "$BASE_URL/refund/$REFUND_REQUEST_ID/reject" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"rejectReason":"不符合退款规则"}'
+```
+
+退款申请创建、审核通过和完成退款都不会恢复库存，也不会写 `stock_record`。
 
 已支付订单不能直接完成：
 
@@ -848,7 +903,7 @@ curl "$BASE_URL/order/$ORDER_ID" \
   -H "Authorization: Bearer $USER_TOKEN"
 ```
 
-管理员内部模拟退款验证可以使用另一笔已支付或已接单订单：
+管理员内部模拟退款接口保留为兜底 API，只适用于没有 `refund_request` 的订单。若订单已经存在退款申请，应使用上面的 `/refund/...` 流程：
 
 ```bash
 curl -X PUT "$BASE_URL/order/$REFUND_ORDER_ID/refund/start" \
@@ -1566,4 +1621,4 @@ x-dead-letter-routing-key = order.timeout.cancel
 已接单 -> 模拟退款中 -> 模拟已退款
 ```
 
-说明：状态数字大小不是生命周期顺序，不能用 `status > 2` 之类的判断推导订单进度。当前 `ADMIN` 是第一版最大权限演示操作员，用于接单、配送、完成、内部模拟退款；它不是最终商家角色。本 change 不提供用户申请退款接口。
+说明：状态数字大小不是生命周期顺序，不能用 `status > 2` 之类的判断推导订单进度。当前 `ADMIN` 是第一版最大权限演示操作员，用于接单、配送、完成、审核退款申请，并保留内部模拟退款兜底接口。正常用户退款业务流应优先使用 `/refund/...` 接口。

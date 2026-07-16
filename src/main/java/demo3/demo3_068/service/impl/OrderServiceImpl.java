@@ -19,6 +19,7 @@ import demo3.demo3_068.mapper.OrderDetailMapper;
 import demo3.demo3_068.mapper.OrderIdempotencyMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
+import demo3.demo3_068.mapper.RefundRequestMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
@@ -74,6 +75,7 @@ public class OrderServiceImpl implements OrderService {
     private final ShoppingCartMapper shoppingCartMapper;
     private final DishMapper dishMapper;
     private final PaymentRecordMapper paymentRecordMapper;
+    private final RefundRequestMapper refundRequestMapper;
     private final UserMapper userMapper;
     private final RedisDistributedLock redisDistributedLock;
     private final DishStockService dishStockService;
@@ -86,6 +88,7 @@ public class OrderServiceImpl implements OrderService {
                             ShoppingCartMapper shoppingCartMapper,
                             DishMapper dishMapper,
                             PaymentRecordMapper paymentRecordMapper,
+                            RefundRequestMapper refundRequestMapper,
                             UserMapper userMapper,
                             RedisDistributedLock redisDistributedLock,
                             DishStockService dishStockService,
@@ -97,6 +100,7 @@ public class OrderServiceImpl implements OrderService {
         this.shoppingCartMapper = shoppingCartMapper;
         this.dishMapper = dishMapper;
         this.paymentRecordMapper = paymentRecordMapper;
+        this.refundRequestMapper = refundRequestMapper;
         this.userMapper = userMapper;
         this.redisDistributedLock = redisDistributedLock;
         this.dishStockService = dishStockService;
@@ -305,6 +309,7 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public void startRefund(Long id) {
         PermissionChecker.requireAdmin();
+        rejectLegacyRefundWhenRequestExists(id);
         executeStatusOnlyTransition(
                 id,
                 OrderStatus.REFUNDING,
@@ -316,6 +321,7 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public void completeRefund(Long id) {
         PermissionChecker.requireAdmin();
+        rejectLegacyRefundWhenRequestExists(id);
         executeStatusOnlyTransition(
                 id,
                 OrderStatus.REFUNDED,
@@ -378,6 +384,12 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(404, "订单不存在");
         }
         return orders;
+    }
+
+    private void rejectLegacyRefundWhenRequestExists(Long orderId) {
+        if (refundRequestMapper.selectByOrderId(orderId) != null) {
+            throw new BusinessException("该订单已有退款申请，请使用 /refund/... 流程处理");
+        }
     }
 
     private Orders getVisibleOrderOrThrow(Long id) {

@@ -8,6 +8,7 @@ import demo3.demo3_068.entity.OrderIdempotency;
 import demo3.demo3_068.entity.OrderDetail;
 import demo3.demo3_068.entity.Orders;
 import demo3.demo3_068.entity.PaymentRecord;
+import demo3.demo3_068.entity.RefundRequest;
 import demo3.demo3_068.entity.ShoppingCart;
 import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.DishMapper;
@@ -15,6 +16,7 @@ import demo3.demo3_068.mapper.OrderDetailMapper;
 import demo3.demo3_068.mapper.OrderIdempotencyMapper;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
+import demo3.demo3_068.mapper.RefundRequestMapper;
 import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
@@ -65,6 +67,8 @@ class OrderServiceImplTest {
     @Mock
     private PaymentRecordMapper paymentRecordMapper;
     @Mock
+    private RefundRequestMapper refundRequestMapper;
+    @Mock
     private UserMapper userMapper;
     @Mock
     private RedisDistributedLock redisDistributedLock;
@@ -86,6 +90,7 @@ class OrderServiceImplTest {
                 shoppingCartMapper,
                 dishMapper,
                 paymentRecordMapper,
+                refundRequestMapper,
                 userMapper,
                 redisDistributedLock,
                 dishStockService,
@@ -369,6 +374,22 @@ class OrderServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(403);
+    }
+
+    @Test
+    void legacyRefundFallbackRejectsWhenRefundRequestExists() {
+        BaseContext.setCurrentUserRole(Role.ADMIN);
+        when(refundRequestMapper.selectByOrderId(101L)).thenReturn(new RefundRequest());
+
+        assertThatThrownBy(() -> orderService.startRefund(101L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("该订单已有退款申请，请使用 /refund/... 流程处理");
+        assertThatThrownBy(() -> orderService.completeRefund(101L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("该订单已有退款申请，请使用 /refund/... 流程处理");
+
+        verify(redisDistributedLock, never()).tryLock(any(), any(), any());
+        verify(ordersMapper, never()).updateStatusById(any(), any(), any());
     }
 
     @Test
