@@ -42,17 +42,29 @@ The system SHALL allow only state-machine-approved order status transitions.
 - **WHEN** a `DELIVERY` or `ADMIN` completes a delivering order
 - **THEN** the order status MUST transition from delivering to completed
 
-#### Scenario: Paid order can enter refunding
-- **WHEN** an `ADMIN` starts a refund for a paid order
-- **THEN** the order status MUST transition from paid to refunding as an internal mock refund
+#### Scenario: Paid order can enter refunding through approved refund request
+- **WHEN** an `ADMIN` approves a pending refund request for a paid order
+- **THEN** the order status MUST transition from paid to refunding
 
-#### Scenario: Accepted order can enter refunding
-- **WHEN** an `ADMIN` starts a refund for an accepted order
-- **THEN** the order status MUST transition from accepted to refunding as an internal mock refund
+#### Scenario: Accepted order can enter refunding through approved refund request
+- **WHEN** an `ADMIN` approves a pending refund request for an accepted order
+- **THEN** the order status MUST transition from accepted to refunding
 
-#### Scenario: Refunding order can become refunded
-- **WHEN** an `ADMIN` completes refund for a refunding order
-- **THEN** the order status MUST transition from refunding to refunded as an internal mock refund completion
+#### Scenario: Paid order can enter refunding through internal fallback
+- **WHEN** an `ADMIN` starts an internal mock refund for a paid order through the order-level fallback endpoint
+- **THEN** the order status MUST transition from paid to refunding
+
+#### Scenario: Accepted order can enter refunding through internal fallback
+- **WHEN** an `ADMIN` starts an internal mock refund for an accepted order through the order-level fallback endpoint
+- **THEN** the order status MUST transition from accepted to refunding
+
+#### Scenario: Refunding order can become refunded through completed refund request
+- **WHEN** an `ADMIN` completes an approved refund request for a refunding order
+- **THEN** the order status MUST transition from refunding to refunded
+
+#### Scenario: Refunding order can become refunded through internal fallback
+- **WHEN** an `ADMIN` completes an internal mock refund for a refunding order through the order-level fallback endpoint
+- **THEN** the order status MUST transition from refunding to refunded
 
 ### Requirement: Payment Initiation Does Not Change Order State
 The system SHALL not change order business status when mock payment is only initiated.
@@ -88,9 +100,20 @@ The system SHALL reject attempts to perform order status transitions that are no
 - **WHEN** an `ADMIN` starts a refund for a delivering order
 - **THEN** the system MUST reject the request and MUST NOT update the order status
 
-#### Scenario: User refund request is not supported in this change
-- **WHEN** a user attempts to request a refund
-- **THEN** the system MUST NOT provide a user refund request transition in this change
+#### Scenario: User refund request cannot target ineligible order state
+- **WHEN** a user requests a refund for an order whose status is not paid or accepted
+- **THEN** the system MUST reject the refund request
+- **AND** it MUST NOT update the order status
+
+#### Scenario: Refund request approval cannot refund changed order state
+- **WHEN** an `ADMIN` approves a refund request for an order that is no longer paid or accepted
+- **THEN** the system MUST reject the approval
+- **AND** it MUST NOT update the order status
+
+#### Scenario: Refund request completion cannot complete changed order state
+- **WHEN** an `ADMIN` completes a refund request for an order that is no longer refunding
+- **THEN** the system MUST reject the completion
+- **AND** it MUST NOT update the order status
 
 ### Requirement: Actor Permissions For Order Transitions
 The system SHALL restrict order status transition operations by actor role and order ownership.
@@ -207,6 +230,10 @@ The system SHALL not change stock during order status transitions that do not re
 
 #### Scenario: Mock refund transitions do not change stock
 - **WHEN** an `ADMIN` starts or completes an internal mock refund
+- **THEN** the system MUST NOT change dish stock
+
+#### Scenario: Refund request transitions do not change stock
+- **WHEN** an `ADMIN` approves or completes a refund request
 - **THEN** the system MUST NOT change dish stock
 
 ### Requirement: System Timeout Can Cancel Pending Orders

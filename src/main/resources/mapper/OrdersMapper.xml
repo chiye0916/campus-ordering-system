@@ -99,4 +99,14 @@
         where id = #{id}
           and status = #{oldStatus}
     </update>
+
+    <update id="updateStatusByIdInOldStatuses">
+        update orders
+        set status = #{newStatus}
+        where id = #{id}
+          and status in
+          <foreach collection="oldStatuses" item="oldStatus" open="(" separator="," close=")">
+              #{oldStatus}
+          </foreach>
+    </update>
 </mapper>

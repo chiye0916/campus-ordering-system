@@ -249,6 +249,7 @@ abstract class BaseIntegrationTest {
                 "payment_callback_record",
                 "payment_record",
                 "stock_record",
+                "refund_request",
                 "order_detail",
                 "order_timeout_outbox",
                 "order_idempotency",

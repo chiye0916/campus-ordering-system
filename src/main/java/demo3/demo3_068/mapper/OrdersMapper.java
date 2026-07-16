@@ -41,4 +41,8 @@ public interface OrdersMapper {
     int updateStatusById(@Param("id") Long id,
                          @Param("oldStatus") Integer oldStatus,
                          @Param("newStatus") Integer newStatus);
+
+    int updateStatusByIdInOldStatuses(@Param("id") Long id,
+                                      @Param("oldStatuses") List<Integer> oldStatuses,
+                                      @Param("newStatus") Integer newStatus);
 }
