@@ -248,6 +248,7 @@ abstract class BaseIntegrationTest {
         for (String table : new String[]{
                 "payment_callback_record",
                 "payment_record",
+                "order_status_history",
                 "stock_record",
                 "refund_request",
                 "order_detail",

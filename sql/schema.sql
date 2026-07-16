@@ -76,6 +76,23 @@ CREATE TABLE IF NOT EXISTS orders (
     KEY idx_orders_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS order_status_history (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    order_id BIGINT NOT NULL,
+    order_number VARCHAR(64) NOT NULL,
+    user_id BIGINT NOT NULL,
+    old_status TINYINT,
+    new_status TINYINT NOT NULL,
+    operation VARCHAR(64) NOT NULL,
+    operator_id BIGINT,
+    operator_role VARCHAR(32) NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    trace_id VARCHAR(64),
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_order_status_history_order_id_create_time_id (order_id, create_time, id),
+    KEY idx_order_status_history_trace_id (trace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS refund_request (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     refund_no VARCHAR(64) NOT NULL,

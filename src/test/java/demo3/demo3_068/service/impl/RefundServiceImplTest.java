@@ -11,8 +11,10 @@ import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.RefundRequestMapper;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.model.OrderStatusChangeOperation;
 import demo3.demo3_068.model.RefundRequestStatus;
 import demo3.demo3_068.model.Role;
+import demo3.demo3_068.service.OrderStatusHistoryService;
 import demo3.demo3_068.vo.RefundRequestVO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,12 +43,14 @@ class RefundServiceImplTest {
     private RefundRequestMapper refundRequestMapper;
     @Mock
     private OrdersMapper ordersMapper;
+    @Mock
+    private OrderStatusHistoryService orderStatusHistoryService;
 
     private RefundServiceImpl refundService;
 
     @BeforeEach
     void setUp() {
-        refundService = new RefundServiceImpl(refundRequestMapper, ordersMapper);
+        refundService = new RefundServiceImpl(refundRequestMapper, ordersMapper, orderStatusHistoryService);
         BaseContext.setCurrentUserId(7L);
         BaseContext.setCurrentUserRole(Role.USER);
     }
@@ -178,6 +182,7 @@ class RefundServiceImplTest {
         BaseContext.setCurrentUserRole(Role.ADMIN);
         RefundRequest pending = refundRequest(501L, 7L, RefundRequestStatus.PENDING_REVIEW);
         when(refundRequestMapper.selectById(501L)).thenReturn(pending);
+        when(ordersMapper.selectById(101L)).thenReturn(order(OrderStatus.PAID, 7L));
         when(ordersMapper.updateStatusByIdInOldStatuses(
                 eq(101L),
                 eq(List.of(OrderStatus.PAID.getCode(), OrderStatus.ACCEPTED.getCode())),
@@ -189,6 +194,8 @@ class RefundServiceImplTest {
 
         verify(refundRequestMapper).approvePending(eq(501L), eq(RefundRequestStatus.PENDING_REVIEW),
                 eq(RefundRequestStatus.APPROVED), eq(99L), any(), any());
+        verify(orderStatusHistoryService).recordChange(any(Orders.class), eq(OrderStatus.PAID.getCode()), eq(OrderStatus.REFUNDING),
+                eq(OrderStatusChangeOperation.REFUND_REQUEST_APPROVE), eq(99L), eq(Role.ADMIN), eq("退款申请审核通过：RF202607080001"));
 
         RefundRequest pendingForReject = refundRequest(502L, 7L, RefundRequestStatus.PENDING_REVIEW);
         when(refundRequestMapper.selectById(502L)).thenReturn(pendingForReject);
@@ -197,9 +204,11 @@ class RefundServiceImplTest {
         refundService.reject(502L, rejectDTO(" 材料不足 "));
         verify(refundRequestMapper).rejectPending(eq(502L), eq(RefundRequestStatus.PENDING_REVIEW),
                 eq(RefundRequestStatus.REJECTED), eq(99L), any(), eq("材料不足"), any());
+        verify(orderStatusHistoryService, never()).recordChange(any(), any(), eq(OrderStatus.REFUNDED), any(), any(), any(), any());
 
         RefundRequest approved = refundRequest(503L, 7L, RefundRequestStatus.APPROVED);
         when(refundRequestMapper.selectById(503L)).thenReturn(approved);
+        when(ordersMapper.selectById(101L)).thenReturn(order(OrderStatus.REFUNDING, 7L));
         when(ordersMapper.updateStatusById(101L, OrderStatus.REFUNDING.getCode(), OrderStatus.REFUNDED.getCode()))
                 .thenReturn(1);
         when(refundRequestMapper.completeApproved(eq(503L), eq(RefundRequestStatus.APPROVED),
@@ -207,6 +216,8 @@ class RefundServiceImplTest {
         refundService.complete(503L);
         verify(refundRequestMapper).completeApproved(eq(503L), eq(RefundRequestStatus.APPROVED),
                 eq(RefundRequestStatus.COMPLETED), any(), any());
+        verify(orderStatusHistoryService).recordChange(any(Orders.class), eq(OrderStatus.REFUNDING.getCode()), eq(OrderStatus.REFUNDED),
+                eq(OrderStatusChangeOperation.REFUND_REQUEST_COMPLETE), eq(99L), eq(Role.ADMIN), eq("退款申请完成退款：RF202607080001"));
     }
 
     @Test
@@ -218,6 +229,7 @@ class RefundServiceImplTest {
                 .hasMessage("只有待审核退款申请才能审批通过");
 
         when(refundRequestMapper.selectById(502L)).thenReturn(refundRequest(502L, 7L, RefundRequestStatus.PENDING_REVIEW));
+        when(ordersMapper.selectById(101L)).thenReturn(order(OrderStatus.PAID, 7L));
         when(ordersMapper.updateStatusByIdInOldStatuses(any(), any(), any())).thenReturn(0);
         assertThatThrownBy(() -> refundService.approve(502L))
                 .isInstanceOf(BusinessException.class)
@@ -229,6 +241,7 @@ class RefundServiceImplTest {
                 .hasMessage("只有已通过退款申请才能完成退款");
 
         when(refundRequestMapper.selectById(504L)).thenReturn(refundRequest(504L, 7L, RefundRequestStatus.APPROVED));
+        when(ordersMapper.selectById(101L)).thenReturn(order(OrderStatus.REFUNDING, 7L));
         when(ordersMapper.updateStatusById(any(), any(), any())).thenReturn(0);
         assertThatThrownBy(() -> refundService.complete(504L))
                 .isInstanceOf(BusinessException.class)
@@ -258,6 +271,7 @@ class RefundServiceImplTest {
     void refundRequestFlowDoesNotUseStockPersistenceCollaborators() {
         BaseContext.setCurrentUserRole(Role.ADMIN);
         when(refundRequestMapper.selectById(501L)).thenReturn(refundRequest(501L, 7L, RefundRequestStatus.APPROVED));
+        when(ordersMapper.selectById(101L)).thenReturn(order(OrderStatus.REFUNDING, 7L));
         when(ordersMapper.updateStatusById(101L, OrderStatus.REFUNDING.getCode(), OrderStatus.REFUNDED.getCode()))
                 .thenReturn(1);
         when(refundRequestMapper.completeApproved(eq(501L), eq(RefundRequestStatus.APPROVED),

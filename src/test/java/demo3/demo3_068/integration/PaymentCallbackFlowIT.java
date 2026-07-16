@@ -24,6 +24,17 @@ class PaymentCallbackFlowIT extends BaseIntegrationTest {
         assertThat(intCell("select locked_stock from dish_stock where dish_id = ?", payment.dishId())).isZero();
         assertThat(longCell("select count(*) from stock_record where order_id = ? and change_type = 'CONFIRM'",
                 payment.orderId())).isEqualTo(1L);
+        JsonNode history = getJsonWithToken("/order/" + payment.orderId() + "/status-history", payment.userToken())
+                .path("data");
+        assertThat(history).hasSize(2);
+        assertThat(history.get(0).path("operation").asText()).isEqualTo("ORDER_SUBMIT");
+        assertThat(history.get(0).path("oldStatus").isNull()).isTrue();
+        assertThat(history.get(0).path("newStatus").asInt()).isEqualTo(1);
+        assertThat(history.get(1).path("operation").asText()).isEqualTo("PAYMENT_SUCCESS");
+        assertThat(history.get(1).path("oldStatus").asInt()).isEqualTo(1);
+        assertThat(history.get(1).path("newStatus").asInt()).isEqualTo(2);
+        assertThat(longCell("select count(*) from order_status_history where order_id = ?", payment.orderId()))
+                .isEqualTo(2L);
     }
 
     @Test
@@ -69,9 +80,9 @@ class PaymentCallbackFlowIT extends BaseIntegrationTest {
         Long orderId = submitOrder(token, idempotencyKey, "payment");
         JsonNode pay = startPayment(token, orderId);
         assertThat(pay.path("code").asInt()).isEqualTo(200);
-        return new SubmittedPayment(orderId, dishId, pay.path("data").path("tradeNo").asText());
+        return new SubmittedPayment(orderId, dishId, pay.path("data").path("tradeNo").asText(), token);
     }
 
-    private record SubmittedPayment(Long orderId, Long dishId, String tradeNo) {
+    private record SubmittedPayment(Long orderId, Long dishId, String tradeNo, String userToken) {
     }
 }

@@ -5,13 +5,18 @@ import demo3.demo3_068.dto.OrderPageQueryDTO;
 import demo3.demo3_068.dto.OrderSubmitDTO;
 import demo3.demo3_068.vo.OrderDetailVO;
 import demo3.demo3_068.vo.OrderPayVO;
+import demo3.demo3_068.vo.OrderStatusHistoryVO;
 import demo3.demo3_068.vo.OrderVO;
+
+import java.util.List;
 
 public interface OrderService {
 
     Long submit(OrderSubmitDTO orderSubmitDTO, String idempotencyKey);
 
     OrderDetailVO getDetail(Long id);
+
+    List<OrderStatusHistoryVO> getStatusHistory(Long id);
 
     PageResult<OrderVO> page(OrderPageQueryDTO orderPageQueryDTO);
 

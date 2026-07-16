@@ -12,8 +12,10 @@ import demo3.demo3_068.exception.BusinessException;
 import demo3.demo3_068.mapper.OrdersMapper;
 import demo3.demo3_068.mapper.RefundRequestMapper;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.model.OrderStatusChangeOperation;
 import demo3.demo3_068.model.RefundRequestStatus;
 import demo3.demo3_068.model.Role;
+import demo3.demo3_068.service.OrderStatusHistoryService;
 import demo3.demo3_068.service.RefundService;
 import demo3.demo3_068.utils.RefundNoUtil;
 import demo3.demo3_068.vo.RefundRequestVO;
@@ -29,10 +31,14 @@ public class RefundServiceImpl implements RefundService {
 
     private final RefundRequestMapper refundRequestMapper;
     private final OrdersMapper ordersMapper;
+    private final OrderStatusHistoryService orderStatusHistoryService;
 
-    public RefundServiceImpl(RefundRequestMapper refundRequestMapper, OrdersMapper ordersMapper) {
+    public RefundServiceImpl(RefundRequestMapper refundRequestMapper,
+                             OrdersMapper ordersMapper,
+                             OrderStatusHistoryService orderStatusHistoryService) {
         this.refundRequestMapper = refundRequestMapper;
         this.ordersMapper = ordersMapper;
+        this.orderStatusHistoryService = orderStatusHistoryService;
     }
 
     @Override
@@ -114,6 +120,8 @@ public class RefundServiceImpl implements RefundService {
         if (refundRequest.getStatus() != RefundRequestStatus.PENDING_REVIEW) {
             throw new BusinessException("只有待审核退款申请才能审批通过");
         }
+        Orders orders = getOrderOrThrow(refundRequest.getOrderId());
+        OrderStatus oldStatus = OrderStatus.fromCode(orders.getStatus());
         LocalDateTime now = LocalDateTime.now();
         int orderRows = ordersMapper.updateStatusByIdInOldStatuses(
                 refundRequest.getOrderId(),
@@ -132,6 +140,14 @@ public class RefundServiceImpl implements RefundService {
         if (requestRows == 0) {
             throw new BusinessException("退款申请状态已变化，请刷新后重试");
         }
+        orderStatusHistoryService.recordChange(
+                orders,
+                oldStatus.getCode(),
+                OrderStatus.REFUNDING,
+                OrderStatusChangeOperation.REFUND_REQUEST_APPROVE,
+                reviewerId,
+                Role.ADMIN,
+                "退款申请审核通过：" + refundRequest.getRefundNo());
     }
 
     @Override
@@ -166,6 +182,7 @@ public class RefundServiceImpl implements RefundService {
         if (refundRequest.getStatus() != RefundRequestStatus.APPROVED) {
             throw new BusinessException("只有已通过退款申请才能完成退款");
         }
+        Orders orders = getOrderOrThrow(refundRequest.getOrderId());
         LocalDateTime now = LocalDateTime.now();
         int orderRows = ordersMapper.updateStatusById(
                 refundRequest.getOrderId(),
@@ -183,6 +200,14 @@ public class RefundServiceImpl implements RefundService {
         if (requestRows == 0) {
             throw new BusinessException("退款申请状态已变化，请刷新后重试");
         }
+        orderStatusHistoryService.recordChange(
+                orders,
+                OrderStatus.REFUNDING.getCode(),
+                OrderStatus.REFUNDED,
+                OrderStatusChangeOperation.REFUND_REQUEST_COMPLETE,
+                currentUserIdOrThrow(),
+                Role.ADMIN,
+                "退款申请完成退款：" + refundRequest.getRefundNo());
     }
 
     private PageResult<RefundRequestVO> pageByScope(Long userId, RefundRequestPageQueryDTO queryDTO) {
@@ -203,6 +228,14 @@ public class RefundServiceImpl implements RefundService {
             throw new BusinessException(404, "退款申请不存在");
         }
         return refundRequest;
+    }
+
+    private Orders getOrderOrThrow(Long id) {
+        Orders orders = ordersMapper.selectById(id);
+        if (orders == null) {
+            throw new BusinessException(404, "订单不存在");
+        }
+        return orders;
     }
 
     private String normalizeRequiredReason(String value, String message) {

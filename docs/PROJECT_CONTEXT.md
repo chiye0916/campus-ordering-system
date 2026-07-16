@@ -76,6 +76,10 @@
 - 已新增 `refund_request` 表，状态为 `PENDING_REVIEW`、`APPROVED`、`REJECTED`、`COMPLETED`；同一订单唯一一条退款申请，拒绝或完成后也不能再次申请
 - 退款申请审核通过会在同一事务中将 `refund_request` 从 `PENDING_REVIEW` 改为 `APPROVED`，并将订单从 `PAID`/`ACCEPTED` 改为 `REFUNDING`；完成退款会将申请改为 `COMPLETED`，并将订单从 `REFUNDING` 改为 `REFUNDED`
 - 退款申请创建、审批和完成均不恢复库存、不写 `stock_record`；旧的 `/order/{id}/refund/start` 和 `/order/{id}/refund/complete` 保留为无退款申请订单的管理员内部兜底接口
+- 已新增 `order_status_history` 订单状态历史审计表，记录订单快照、old/new 状态码、操作枚举、操作人角色/id、中文原因、traceId 和创建时间；按 `(order_id, create_time, id)` 支持时间线查询
+- 所有成功订单状态流转在同一事务内写状态历史：`ORDER_SUBMIT`、`PAYMENT_SUCCESS`、`USER_CANCEL`、`TIMEOUT_CANCEL`、`MERCHANT_ACCEPT`、`DELIVERY_START`、`DELIVERY_COMPLETE`、`REFUND_REQUEST_APPROVE`、`REFUND_REQUEST_COMPLETE`、`INTERNAL_REFUND_START`、`INTERNAL_REFUND_COMPLETE`
+- 订单状态历史只记录成功状态变化；重复支付回调、超时 no-op、退款拒绝、失败回调、条件更新失败等不会写历史；不回填旧订单
+- 已新增 `GET /order/{id}/status-history`，复用订单详情可见性并按 `create_time asc, id asc` 返回；可见旧订单无历史时返回空列表，`SYSTEM` 不能通过普通 HTTP 查询
 - 订单列表按工作台收敛：`USER` 看自己的全部状态订单，`MERCHANT` 看全局 `PAID`/`ACCEPTED`，`DELIVERY` 看全局 `ACCEPTED`/`DELIVERING`，`ADMIN` 看全部；`SYSTEM` 不允许普通 HTTP 可见性
 - 订单详情按角色历史范围收敛：`MERCHANT` 可看 `PAID`、`ACCEPTED`、`DELIVERING`、`COMPLETED`、`REFUNDING`、`REFUNDED`；`DELIVERY` 可看 `ACCEPTED`、`DELIVERING`、`COMPLETED`；退款操作仍不授予 `MERCHANT`
 - 已新增 Testcontainers 集成回归套件基础：`./mvnw test` 继续只跑快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 通过 Failsafe 运行 `*IT`，使用容器 MySQL、Redis（`GenericContainer` + `redis:7-alpine`）和轻量 RabbitMQ 上下文配置
@@ -143,6 +147,7 @@
 - `payment_callback_record`：模拟第三方支付回调记录表，`callback_no` 唯一，记录回调处理状态、原始 payload、失败原因，可在未知 `tradeNo` 时保留空的支付/订单引用
 - `order_timeout_outbox`：订单超时消息 outbox，记录 orderId/messageId/payload/expireTime/status/retry/claim/sent/lastError
 - `refund_request`：退款申请业务记录表，`order_id` 和 `refund_no` 唯一，记录订单快照、原因、状态、审核人、审核/完成时间
+- `order_status_history`：订单状态历史表，记录成功状态变更时间线和 traceId，失败或 no-op 不入库
 
 订单状态：
 
@@ -200,6 +205,7 @@
 
 - `POST /order/submit`：根据购物车提交订单
 - `GET /order/{id}`：查询订单详情
+- `GET /order/{id}/status-history`：查询订单状态历史时间线，复用订单详情可见性
 - `GET /order/page`：分页查询订单
 - `PUT /order/{id}/pay`：发起或复用模拟支付，返回 `tradeNo` 和 `PAYING` 状态
 - `PUT /order/{id}/cancel`：取消订单

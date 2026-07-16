@@ -14,10 +14,12 @@ import demo3.demo3_068.mapper.PaymentCallbackRecordMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.model.MockPayStatus;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.model.OrderStatusChangeOperation;
 import demo3.demo3_068.model.PaymentCallbackProcessStatus;
 import demo3.demo3_068.model.PaymentStatus;
 import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.service.DishStockService;
+import demo3.demo3_068.service.OrderStatusHistoryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -57,6 +59,8 @@ class PaymentServiceImplTest {
     @Mock
     private DishStockService dishStockService;
     @Mock
+    private OrderStatusHistoryService orderStatusHistoryService;
+    @Mock
     private BusinessMetrics businessMetrics;
 
     private PaymentServiceImpl paymentService;
@@ -70,6 +74,7 @@ class PaymentServiceImplTest {
                 orderDetailMapper,
                 redisDistributedLock,
                 dishStockService,
+                orderStatusHistoryService,
                 new ObjectMapper(),
                 businessMetrics);
         lenient().when(paymentCallbackRecordMapper.finalizeById(any(), any(), any(), any(), any(), any())).thenReturn(1);
@@ -132,6 +137,8 @@ class PaymentServiceImplTest {
         paymentService.handleMockCallback(callback(MockPayStatus.SUCCESS, "30.00"));
 
         verify(dishStockService).confirmLockedStock(101L, Map.of(1L, 3), 7L);
+        verify(orderStatusHistoryService).recordSystemChange(any(Orders.class), eq(OrderStatus.PENDING_PAYMENT.getCode()),
+                eq(OrderStatus.PAID), eq(OrderStatusChangeOperation.PAYMENT_SUCCESS), eq(null));
         verifyFinalize(PaymentCallbackProcessStatus.PROCESSED, 88L, 101L);
     }
 
@@ -193,6 +200,7 @@ class PaymentServiceImplTest {
 
         verifyFinalize(PaymentCallbackProcessStatus.DUPLICATE, 88L, 101L);
         verify(dishStockService, never()).confirmLockedStock(any(), any(), any());
+        verify(orderStatusHistoryService, never()).recordSystemChange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -222,6 +230,7 @@ class PaymentServiceImplTest {
         verifyFinalize(PaymentCallbackProcessStatus.DUPLICATE, 88L, 101L);
         verify(ordersMapper, never()).updateToPaidById(any(), any(), any(), any());
         verify(dishStockService, never()).confirmLockedStock(any(), any(), any());
+        verify(orderStatusHistoryService, never()).recordSystemChange(any(), any(), any(), any(), any());
     }
 
     private void mockInsertCallbackId() {

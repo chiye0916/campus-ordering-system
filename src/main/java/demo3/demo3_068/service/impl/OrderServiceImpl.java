@@ -24,18 +24,21 @@ import demo3.demo3_068.mapper.ShoppingCartMapper;
 import demo3.demo3_068.mapper.UserMapper;
 import demo3.demo3_068.model.OrderIdempotencyStatus;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.model.OrderStatusChangeOperation;
 import demo3.demo3_068.model.PaymentStatus;
 import demo3.demo3_068.model.Role;
 import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.observability.TraceContext;
 import demo3.demo3_068.service.DishStockService;
 import demo3.demo3_068.service.OrderService;
+import demo3.demo3_068.service.OrderStatusHistoryService;
 import demo3.demo3_068.service.OrderTimeoutOutboxService;
 import demo3.demo3_068.utils.OrderNumberUtil;
 import demo3.demo3_068.utils.PaymentTradeNoUtil;
 import demo3.demo3_068.vo.OrderDetailVO;
 import demo3.demo3_068.vo.OrderItemVO;
 import demo3.demo3_068.vo.OrderPayVO;
+import demo3.demo3_068.vo.OrderStatusHistoryVO;
 import demo3.demo3_068.vo.OrderVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -80,6 +83,7 @@ public class OrderServiceImpl implements OrderService {
     private final RedisDistributedLock redisDistributedLock;
     private final DishStockService dishStockService;
     private final OrderTimeoutOutboxService orderTimeoutOutboxService;
+    private final OrderStatusHistoryService orderStatusHistoryService;
     private final BusinessMetrics businessMetrics;
 
     public OrderServiceImpl(OrdersMapper ordersMapper,
@@ -93,6 +97,7 @@ public class OrderServiceImpl implements OrderService {
                             RedisDistributedLock redisDistributedLock,
                             DishStockService dishStockService,
                             OrderTimeoutOutboxService orderTimeoutOutboxService,
+                            OrderStatusHistoryService orderStatusHistoryService,
                             BusinessMetrics businessMetrics) {
         this.ordersMapper = ordersMapper;
         this.orderDetailMapper = orderDetailMapper;
@@ -105,6 +110,7 @@ public class OrderServiceImpl implements OrderService {
         this.redisDistributedLock = redisDistributedLock;
         this.dishStockService = dishStockService;
         this.orderTimeoutOutboxService = orderTimeoutOutboxService;
+        this.orderStatusHistoryService = orderStatusHistoryService;
         this.businessMetrics = businessMetrics;
     }
 
@@ -179,6 +185,14 @@ public class OrderServiceImpl implements OrderService {
             if (rows == 0) {
                 throw new BusinessException("下单幂等记录状态更新失败，请重试");
             }
+            orderStatusHistoryService.recordChange(
+                    orders,
+                    null,
+                    OrderStatus.PENDING_PAYMENT,
+                    OrderStatusChangeOperation.ORDER_SUBMIT,
+                    userId,
+                    Role.USER,
+                    null);
             businessMetrics.recordOrderSubmit("success", "created");
             log.info("Order submit outcome traceId={} result=success userId={} orderId={} idempotencyKey={}",
                     traceId(), userId, orders.getId(), normalizedKey);
@@ -205,6 +219,12 @@ public class OrderServiceImpl implements OrderService {
                 .map(this::toOrderItemVO)
                 .toList();
         return toOrderDetailVO(orders, items);
+    }
+
+    @Override
+    public List<OrderStatusHistoryVO> getStatusHistory(Long id) {
+        getVisibleOrderOrThrow(id);
+        return orderStatusHistoryService.listByOrderId(id);
     }
 
     @Override
@@ -273,6 +293,14 @@ public class OrderServiceImpl implements OrderService {
                     aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
                     getCurrentUserIdOrThrow());
             closeCurrentPayingMockPayment(id);
+            orderStatusHistoryService.recordChange(
+                    orders,
+                    oldStatus.getCode(),
+                    OrderStatus.CANCELLED,
+                    OrderStatusChangeOperation.USER_CANCEL,
+                    getCurrentUserIdOrThrow(),
+                    Role.USER,
+                    null);
             log.info("Order cancel outcome traceId={} result=success source=manual userId={} orderId={}",
                     traceId(), BaseContext.getCurrentUserId(), id);
         });
@@ -282,14 +310,24 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public void accept(Long id) {
         PermissionChecker.requireMerchantOrAdmin();
-        executeStatusOnlyTransition(id, OrderStatus.ACCEPTED, this::getOrderOrThrow, "只有已支付订单才能接单");
+        executeStatusOnlyTransition(
+                id,
+                OrderStatus.ACCEPTED,
+                OrderStatusChangeOperation.MERCHANT_ACCEPT,
+                this::getOrderOrThrow,
+                "只有已支付订单才能接单");
     }
 
     @Override
     @Transactional
     public void startDelivery(Long id) {
         PermissionChecker.requireDeliveryOrAdmin();
-        executeStatusOnlyTransition(id, OrderStatus.DELIVERING, this::getOrderOrThrow, "只有已接单订单才能开始配送");
+        executeStatusOnlyTransition(
+                id,
+                OrderStatus.DELIVERING,
+                OrderStatusChangeOperation.DELIVERY_START,
+                this::getOrderOrThrow,
+                "只有已接单订单才能开始配送");
     }
 
     @Override
@@ -299,6 +337,7 @@ public class OrderServiceImpl implements OrderService {
         executeTimestampTransition(
                 id,
                 OrderStatus.COMPLETED,
+                OrderStatusChangeOperation.DELIVERY_COMPLETE,
                 this::getOrderOrThrow,
                 "只有配送中订单才能完成",
                 (orderId, oldStatus) -> ordersMapper.updateToCompletedById(
@@ -313,6 +352,7 @@ public class OrderServiceImpl implements OrderService {
         executeStatusOnlyTransition(
                 id,
                 OrderStatus.REFUNDING,
+                OrderStatusChangeOperation.INTERNAL_REFUND_START,
                 this::getOrderOrThrow,
                 "只有已支付或已接单订单才能发起内部模拟退款");
     }
@@ -325,6 +365,7 @@ public class OrderServiceImpl implements OrderService {
         executeStatusOnlyTransition(
                 id,
                 OrderStatus.REFUNDED,
+                OrderStatusChangeOperation.INTERNAL_REFUND_COMPLETE,
                 this::getOrderOrThrow,
                 "只有模拟退款中的订单才能完成内部模拟退款");
     }
@@ -362,15 +403,18 @@ public class OrderServiceImpl implements OrderService {
             }
 
             Long systemOperatorId = userMapper.selectIdByUsername(Constants.SYSTEM_TIMEOUT_USERNAME);
-            if (systemOperatorId == null) {
-                throw new BusinessException("订单超时系统用户不存在");
-            }
             dishStockService.releaseLockedStock(
                     id,
                     aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(id)),
                     systemOperatorId,
                     TIMEOUT_RELEASE_REMARK);
             closeCurrentPayingMockPayment(id);
+            orderStatusHistoryService.recordSystemChange(
+                    orders,
+                    OrderStatus.PENDING_PAYMENT.getCode(),
+                    OrderStatus.CANCELLED,
+                    OrderStatusChangeOperation.TIMEOUT_CANCEL,
+                    null);
             businessMetrics.recordTimeoutCancel("success");
             log.info("Order cancel outcome traceId={} result=success source=timeout operator=system orderId={} messageId={}",
                     traceId(), id, messageId);
@@ -509,11 +553,13 @@ public class OrderServiceImpl implements OrderService {
 
     private void executeStatusOnlyTransition(Long id,
                                              OrderStatus targetStatus,
+                                             OrderStatusChangeOperation operation,
                                              Function<Long, Orders> orderLoader,
                                              String illegalMessage) {
         executeTimestampTransition(
                 id,
                 targetStatus,
+                operation,
                 orderLoader,
                 illegalMessage,
                 (orderId, oldStatus) -> ordersMapper.updateStatusById(
@@ -522,6 +568,7 @@ public class OrderServiceImpl implements OrderService {
 
     private void executeTimestampTransition(Long id,
                                             OrderStatus targetStatus,
+                                            OrderStatusChangeOperation operation,
                                             Function<Long, Orders> orderLoader,
                                             String illegalMessage,
                                             BiFunction<Long, OrderStatus, Integer> updater) {
@@ -532,6 +579,14 @@ public class OrderServiceImpl implements OrderService {
             if (rows == 0) {
                 throw new BusinessException("订单状态已变化，请刷新后重试");
             }
+            orderStatusHistoryService.recordChange(
+                    orders,
+                    oldStatus.getCode(),
+                    targetStatus,
+                    operation,
+                    getCurrentUserIdOrThrow(),
+                    PermissionChecker.currentRoleOrThrow(),
+                    null);
         });
     }
 

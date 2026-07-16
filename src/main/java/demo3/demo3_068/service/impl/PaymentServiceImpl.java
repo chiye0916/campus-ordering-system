@@ -16,11 +16,13 @@ import demo3.demo3_068.mapper.PaymentCallbackRecordMapper;
 import demo3.demo3_068.mapper.PaymentRecordMapper;
 import demo3.demo3_068.model.MockPayStatus;
 import demo3.demo3_068.model.OrderStatus;
+import demo3.demo3_068.model.OrderStatusChangeOperation;
 import demo3.demo3_068.model.PaymentCallbackProcessStatus;
 import demo3.demo3_068.model.PaymentStatus;
 import demo3.demo3_068.observability.BusinessMetrics;
 import demo3.demo3_068.observability.TraceContext;
 import demo3.demo3_068.service.DishStockService;
+import demo3.demo3_068.service.OrderStatusHistoryService;
 import demo3.demo3_068.service.PaymentService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -49,6 +51,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final OrderDetailMapper orderDetailMapper;
     private final RedisDistributedLock redisDistributedLock;
     private final DishStockService dishStockService;
+    private final OrderStatusHistoryService orderStatusHistoryService;
     private final ObjectMapper objectMapper;
     private final BusinessMetrics businessMetrics;
 
@@ -58,6 +61,7 @@ public class PaymentServiceImpl implements PaymentService {
                               OrderDetailMapper orderDetailMapper,
                               RedisDistributedLock redisDistributedLock,
                               DishStockService dishStockService,
+                              OrderStatusHistoryService orderStatusHistoryService,
                               ObjectMapper objectMapper,
                               BusinessMetrics businessMetrics) {
         this.paymentCallbackRecordMapper = paymentCallbackRecordMapper;
@@ -66,6 +70,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.orderDetailMapper = orderDetailMapper;
         this.redisDistributedLock = redisDistributedLock;
         this.dishStockService = dishStockService;
+        this.orderStatusHistoryService = orderStatusHistoryService;
         this.objectMapper = objectMapper;
         this.businessMetrics = businessMetrics;
     }
@@ -249,6 +254,12 @@ public class PaymentServiceImpl implements PaymentService {
                 paymentRecord.getOrderId(),
                 aggregateOrderDetailQuantities(orderDetailMapper.selectByOrderId(paymentRecord.getOrderId())),
                 paymentRecord.getUserId());
+        orderStatusHistoryService.recordSystemChange(
+                orders,
+                OrderStatus.PENDING_PAYMENT.getCode(),
+                OrderStatus.PAID,
+                OrderStatusChangeOperation.PAYMENT_SUCCESS,
+                null);
         finalizeCallback(callbackRecord, paymentRecord, PaymentCallbackProcessStatus.PROCESSED, null, now);
         businessMetrics.recordPaymentCallback("success");
         log.info("Payment callback outcome traceId={} result=success tradeNo={} callbackNo={} orderId={} paymentRecordId={}",

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="demo3.demo3_068.mapper.OrderStatusHistoryMapper">
+
+    <resultMap id="OrderStatusHistoryResultMap" type="demo3.demo3_068.entity.OrderStatusHistory">
+        <id column="id" property="id"/>
+        <result column="order_id" property="orderId"/>
+        <result column="order_number" property="orderNumber"/>
+        <result column="user_id" property="userId"/>
+        <result column="old_status" property="oldStatus"/>
+        <result column="new_status" property="newStatus"/>
+        <result column="operation" property="operation"/>
+        <result column="operator_id" property="operatorId"/>
+        <result column="operator_role" property="operatorRole"/>
+        <result column="reason" property="reason"/>
+        <result column="trace_id" property="traceId"/>
+        <result column="create_time" property="createTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="demo3.demo3_068.entity.OrderStatusHistory"
+            useGeneratedKeys="true" keyProperty="id">
+        insert into order_status_history (
+            order_id, order_number, user_id, old_status, new_status,
+            operation, operator_id, operator_role, reason, trace_id, create_time
+        )
+        values (
+            #{orderId}, #{orderNumber}, #{userId}, #{oldStatus}, #{newStatus},
+            #{operation}, #{operatorId}, #{operatorRole}, #{reason}, #{traceId}, #{createTime}
+        )
+    </insert>
+
+    <select id="selectByOrderId" resultMap="OrderStatusHistoryResultMap">
+        select id, order_id, order_number, user_id, old_status, new_status,
+               operation, operator_id, operator_role, reason, trace_id, create_time
+        from order_status_history
+        where order_id = #{orderId}
+        order by create_time asc, id asc
+    </select>
+</mapper>
