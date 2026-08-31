@@ -11,6 +11,10 @@ class PaymentCallbackFlowIT extends BaseIntegrationTest {
     void successCallbackPaysOrderConfirmsStockAndDuplicateCallbackIsIdempotent() throws Exception {
         SubmittedPayment payment = submitAndStartPayment("pay_success_user", "pay-key-success", 5);
 
+        JsonNode repeatedPay = startPayment(payment.userToken(), payment.orderId());
+        assertThat(repeatedPay.path("data").path("tradeNo").asText()).isEqualTo(payment.tradeNo());
+        assertThat(longCell("select count(*) from payment_record where order_id = ?", payment.orderId())).isEqualTo(1L);
+
         JsonNode callback = postPaymentCallback(payment.tradeNo(), "CB-SUCCESS-1", "SUCCESS", "20.00");
         JsonNode duplicate = postPaymentCallback(payment.tradeNo(), "CB-SUCCESS-1", "SUCCESS", "20.00");
 

@@ -34,4 +34,5 @@ build/
 
 ### Local sensitive config ###
 application-local.properties
+!src/main/resources/application-local.properties
 .env

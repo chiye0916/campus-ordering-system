@@ -42,8 +42,7 @@ abstract class BaseIntegrationTest {
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("demo3_it")
             .withUsername("demo3")
-            .withPassword("demo3")
-            .withInitScript("sql/schema.sql");
+            .withPassword("demo3");
 
     static final GenericContainer<?> REDIS = new GenericContainer<>(REDIS_IMAGE)
             .withExposedPorts(6379);
