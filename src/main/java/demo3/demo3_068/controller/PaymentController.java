@@ -6,6 +6,7 @@ import demo3.demo3_068.exception.PaymentCallbackRetryableException;
 import demo3.demo3_068.model.MockPayStatus;
 import demo3.demo3_068.service.PaymentService;
 import jakarta.validation.Valid;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/payment")
+@ConditionalOnProperty(name = "payment.mock.enabled", havingValue = "true")
 public class PaymentController {
 
     private final PaymentService paymentService;

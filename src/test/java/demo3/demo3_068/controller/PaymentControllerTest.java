@@ -6,6 +6,7 @@ import demo3.demo3_068.exception.PaymentCallbackRetryableException;
 import demo3.demo3_068.model.MockPayStatus;
 import demo3.demo3_068.service.PaymentService;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -17,6 +18,23 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 class PaymentControllerTest {
+
+    private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+            .withBean(PaymentService.class, () -> mock(PaymentService.class))
+            .withUserConfiguration(PaymentController.class);
+
+    @Test
+    void mockControllerIsDisabledUnlessExplicitlyEnabled() {
+        contextRunner.run(context -> assertThat(context).doesNotHaveBean(PaymentController.class));
+        contextRunner.withPropertyValues("payment.mock.enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(PaymentController.class));
+    }
+
+    @Test
+    void mockControllerIsAvailableWhenExplicitlyEnabled() {
+        contextRunner.withPropertyValues("payment.mock.enabled=true")
+                .run(context -> assertThat(context).hasSingleBean(PaymentController.class));
+    }
 
     @Test
     void callbackRejectsUnsupportedPayStatusBeforeDelegating() {

@@ -74,6 +74,14 @@
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-mysql</artifactId>
+		</dependency>
+		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
 			<optional>true</optional>
@@ -107,18 +115,6 @@
 	</dependencies>
 
 	<build>
-		<testResources>
-			<testResource>
-				<directory>src/test/resources</directory>
-			</testResource>
-			<testResource>
-				<directory>sql</directory>
-				<targetPath>sql</targetPath>
-				<includes>
-					<include>schema.sql</include>
-				</includes>
-			</testResource>
-		</testResources>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

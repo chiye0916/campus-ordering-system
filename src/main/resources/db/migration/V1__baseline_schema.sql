@@ -1,6 +1,3 @@
--- 数据库结构快照，仅供查阅或不支持 Flyway 的一次性环境使用。
--- 正式初始化与升级以 src/main/resources/db/migration 中的 Flyway 迁移为唯一真相源。
-
 CREATE TABLE IF NOT EXISTS user (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(64) NOT NULL,

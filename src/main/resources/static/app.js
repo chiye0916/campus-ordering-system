@@ -136,6 +136,19 @@ function createIdempotencyKey() {
   return `order-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function createMockPaymentCallbackNo() {
+  if (globalThis.crypto?.randomUUID) {
+    return `CB-${globalThis.crypto.randomUUID()}`;
+  }
+  return `CB-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function currentLocalDateTime() {
+  const now = new Date();
+  const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return localTime.toISOString().slice(0, 19);
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body !== undefined) {
@@ -1338,9 +1351,39 @@ function bindEvents() {
       }
 
       if (action === "order-pay") {
-        const payResult = await api(`/order/${id}/pay`, { method: "PUT" });
-        await loadOrders();
-        showToast(`支付成功：${money(payResult.amount)}`, "success");
+        const originalText = target.textContent;
+        target.disabled = true;
+        target.textContent = "支付处理中...";
+        try {
+          const payResult = await api(`/order/${id}/pay`, { method: "PUT" });
+          const callbackNo = createMockPaymentCallbackNo();
+          await api("/payment/mock/callback", {
+            method: "POST",
+            body: {
+              tradeNo: payResult.tradeNo,
+              callbackNo,
+              thirdTradeNo: `THIRD-${callbackNo}`,
+              payStatus: "SUCCESS",
+              amount: payResult.amount,
+              callbackTime: currentLocalDateTime()
+            }
+          });
+
+          const finalOrder = await api(`/order/${payResult.orderId}`);
+          await loadOrders();
+          if (finalOrder.status === 2) {
+            showToast(`支付成功：${money(finalOrder.amount)}`, "success");
+          } else if (finalOrder.status === 4) {
+            showToast("支付未完成：订单已取消", "error");
+          } else if (finalOrder.status === 1) {
+            showToast("支付回调已接收，但订单仍待支付，请稍后刷新", "info");
+          } else {
+            showToast(`支付结果未确认：订单当前为${statusText[finalOrder.status] || "未知状态"}`, "error");
+          }
+        } finally {
+          target.disabled = false;
+          target.textContent = originalText;
+        }
       }
 
       if (action === "order-cancel") {

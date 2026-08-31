@@ -1,6 +1,7 @@
 package demo3.demo3_068.config;
 
 import demo3.demo3_068.interceptor.JwtTokenInterceptor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -9,14 +10,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final JwtTokenInterceptor jwtTokenInterceptor;
+    private final boolean mockPaymentEnabled;
 
-    public WebMvcConfig(JwtTokenInterceptor jwtTokenInterceptor) {
+    public WebMvcConfig(JwtTokenInterceptor jwtTokenInterceptor,
+                        @Value("${payment.mock.enabled:false}") boolean mockPaymentEnabled) {
         this.jwtTokenInterceptor = jwtTokenInterceptor;
+        this.mockPaymentEnabled = mockPaymentEnabled;
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(jwtTokenInterceptor)
+        var registration = registry.addInterceptor(jwtTokenInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(
                         "/",
@@ -28,8 +32,10 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/actuator/**",
                         "/user/email/code",
                         "/user/register",
-                        "/user/login",
-                        "/payment/mock/callback"
+                        "/user/login"
                 );
+        if (mockPaymentEnabled) {
+            registration.excludePathPatterns("/payment/mock/callback");
+        }
     }
 }

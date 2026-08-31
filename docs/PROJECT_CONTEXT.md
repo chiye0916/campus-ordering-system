@@ -83,6 +83,9 @@
 - 订单列表按工作台收敛：`USER` 看自己的全部状态订单，`MERCHANT` 看全局 `PAID`/`ACCEPTED`，`DELIVERY` 看全局 `ACCEPTED`/`DELIVERING`，`ADMIN` 看全部；`SYSTEM` 不允许普通 HTTP 可见性
 - 订单详情按角色历史范围收敛：`MERCHANT` 可看 `PAID`、`ACCEPTED`、`DELIVERING`、`COMPLETED`、`REFUNDING`、`REFUNDED`；`DELIVERY` 可看 `ACCEPTED`、`DELIVERING`、`COMPLETED`；退款操作仍不授予 `MERCHANT`
 - 已新增 Testcontainers 集成回归套件基础：`./mvnw test` 继续只跑快速单元测试且不依赖 Docker，`./mvnw verify -Pintegration-test` 通过 Failsafe 运行 `*IT`，使用容器 MySQL、Redis（`GenericContainer` + `redis:7-alpine`）和轻量 RabbitMQ 上下文配置
+- 已引入 Flyway 作为正式数据库迁移机制；空库、旧库升级和 Testcontainers 共用 `src/main/resources/db/migration`，`sql/schema.sql` 仅作为结构快照，不再由测试或应用直接初始化
+- Mock 支付回调由 `payment.mock.enabled` 控制，默认关闭；`local` 和 `integration-test` 环境显式开启，生产环境禁止启用
+- 前端支付按钮会依次发起支付、发送本地 Mock 成功回调并回查订单，只有最终状态为 `PAID` 才提示支付成功
 - 集成回归套件覆盖关键链路：`/dish/list` Redis 缓存、下单幂等与库存锁定、支付回调幂等与库存确认、用户退款申请到管理员审批完成；RabbitMQ 超时 TTL/DLX/监听重试/自动取消释放库存不在本阶段集成测试范围
 - 已整理接口联调文档：`docs/API_TEST.md`
 

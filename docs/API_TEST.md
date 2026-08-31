@@ -49,10 +49,10 @@ username: demo3
 password: 12345
 ```
 
-启动项目：
+以本地 profile 启动项目。该 profile 会运行 Flyway，并明确开启 Mock 支付：
 
 ```bash
-./mvnw spring-boot:run
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
 设置请求地址：
@@ -111,101 +111,7 @@ k6 run \
   scripts/k6/payment-callback.js
 ```
 
-如果你的数据库是在邮箱验证码功能之前创建的，需要先给 `user` 表补邮箱字段：
-
-```bash
-docker exec -it mysql8 mysql -u chiye -p1234 demo3_db
-```
-
-```sql
-alter table user add column email varchar(128) null after username;
-alter table user add unique key uk_user_email (email);
-exit;
-```
-
-如果你的数据库是在订单超时取消功能之前创建的，需要补 `order_timeout_outbox` 表，并初始化系统审计用户。也可以直接参考 `sql/schema.sql` 执行完整建表脚本。
-
-```sql
-CREATE TABLE IF NOT EXISTS order_timeout_outbox (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    order_id BIGINT NOT NULL,
-    message_id VARCHAR(64) NOT NULL,
-    trace_id VARCHAR(64),
-    payload TEXT NOT NULL,
-    expire_time DATETIME NOT NULL,
-    status TINYINT NOT NULL COMMENT '1:PENDING, 2:PUBLISHING, 3:SENT, 4:FAILED',
-    retry_count INT NOT NULL DEFAULT 0,
-    next_retry_time DATETIME NOT NULL,
-    publish_claim_time DATETIME,
-    sent_time DATETIME,
-    last_error VARCHAR(512),
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_order_timeout_outbox_order_id (order_id),
-    UNIQUE KEY uk_order_timeout_outbox_message_id (message_id),
-    KEY idx_order_timeout_outbox_due (status, next_retry_time, retry_count),
-    KEY idx_order_timeout_outbox_publish_claim_time (status, publish_claim_time),
-    KEY idx_order_timeout_outbox_expire_time (expire_time)
-);
-
-INSERT INTO `user` (username, email, password, nickname, role)
-SELECT 'system_timeout', NULL, '12345', '订单超时系统', 'SYSTEM'
-WHERE NOT EXISTS (
-    SELECT 1 FROM `user` WHERE username = 'system_timeout'
-);
-```
-
-如果已有 `order_timeout_outbox` 表但缺少本阶段追踪字段，可单独补充：
-
-```sql
-alter table order_timeout_outbox add column trace_id varchar(64) null after message_id;
-```
-
-如果你的数据库是在订单状态历史审计功能之前创建的，需要补 `order_status_history` 表：
-
-```sql
-CREATE TABLE IF NOT EXISTS order_status_history (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    order_id BIGINT NOT NULL,
-    order_number VARCHAR(64) NOT NULL,
-    user_id BIGINT NOT NULL,
-    old_status TINYINT,
-    new_status TINYINT NOT NULL,
-    operation VARCHAR(64) NOT NULL,
-    operator_id BIGINT,
-    operator_role VARCHAR(32) NOT NULL,
-    reason VARCHAR(255) NOT NULL,
-    trace_id VARCHAR(64),
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    KEY idx_order_status_history_order_id_create_time_id (order_id, create_time, id),
-    KEY idx_order_status_history_trace_id (trace_id)
-);
-```
-
-如果你的数据库是在支付回调幂等功能之前创建的，需要补 `payment_callback_record` 表：
-
-```sql
-CREATE TABLE IF NOT EXISTS payment_callback_record (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    payment_record_id BIGINT,
-    order_id BIGINT,
-    trade_no VARCHAR(64) NOT NULL,
-    callback_no VARCHAR(64) NOT NULL,
-    third_trade_no VARCHAR(128),
-    pay_status VARCHAR(32) NOT NULL,
-    amount DECIMAL(10, 2) NOT NULL,
-    callback_time DATETIME NOT NULL,
-    process_status TINYINT NOT NULL COMMENT '1:PROCESSING, 2:PROCESSED, 3:DUPLICATE, 4:FAILED, 5:IGNORED',
-    failure_reason VARCHAR(255),
-    raw_payload TEXT,
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_payment_callback_no (callback_no),
-    KEY idx_payment_callback_trade_no (trade_no),
-    KEY idx_payment_callback_payment_record_id (payment_record_id),
-    KEY idx_payment_callback_order_id (order_id)
-);
-```
+数据库不再依赖本文件中的手工 DDL。空库和旧库升级统一由 Flyway 完成，baseline 策略、生产安全默认值和结构快照规则见 [DATABASE_MIGRATION.md](DATABASE_MIGRATION.md)。
 
 ## 1. 准备普通用户、商家、配送员和管理员
 
@@ -696,6 +602,19 @@ curl "$BASE_URL/order/page?page=1&pageSize=10" \
 curl "$BASE_URL/order/page?page=1&pageSize=10" \
   -H "Authorization: Bearer $DELIVERY_TOKEN"
 ```
+
+### 页面 Mock 支付闭环验收
+
+以下步骤只适用于已启用 `local` profile 的本地 Mock 环境：
+
+1. 打开 `http://127.0.0.1:8080`，登录普通用户，加入有库存的商品并提交订单。
+2. 在订单列表点击“支付”；按钮应立即禁用并显示“支付处理中...”，请求结束后恢复。
+3. 浏览器网络面板中应依次出现 `PUT /order/{id}/pay`、`POST /payment/mock/callback`、`GET /order/{id}` 和订单列表刷新请求。
+4. 仅完成第一个 `/pay` 请求时，订单仍是待支付，页面不能显示“支付成功”；只有回查详情的 `status=2` 时才能显示成功 Toast。
+5. 页面刷新后订单仍应显示“已支付”。数据库中对应 `payment_record.status=2`，并且存在一条 `PAYMENT_SUCCESS` 状态历史。
+6. 快速重复点击时，禁用中的按钮不应发出第二组请求；后端重复 `/pay` 或重复回调测试还应保证不产生重复业务结果。
+
+下面的 curl 步骤保留用于逐段检查后端两阶段支付契约。
 
 发起模拟支付：
 
